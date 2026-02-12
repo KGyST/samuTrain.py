@@ -1,0 +1,3 @@
+[submodule "src/engines/calamari"]
+	path = src/engines/calamari
+	url = https://github.com/Calamari-OCR/calamari.git
