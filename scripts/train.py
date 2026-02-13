@@ -119,7 +119,7 @@ def main():
         
         while args.epochs == -1 or epoch < args.epochs:
             epoch += 1
-            print(f"\nEpoch {epoch} - Training in progress...")
+            print(f"\nEpoch {epoch} - Training in progress... 🚀")
             
             # Simulate training on each image file
             for png_file in png_files:
@@ -150,17 +150,17 @@ def main():
                 is_good_prediction = confidence >= args.confidence_threshold
                 is_failset = not is_good_prediction
                 
-                # Log learning step
+                # Log learning step with emojis
                 if was_failset:
                     if is_failset:
-                        print(f"LEARN: {base_name} | was in failset, failed, stays in failset | conf: {confidence:.3f}")
+                        print(f"LEARN: {base_name} | was in failset, failed, stays in failset | conf: {confidence:.3f} 😞")
                     else:
-                        print(f"LEARN: {base_name} | was in failset, ok, moved to trainset | conf: {confidence:.3f}")
+                        print(f"LEARN: {base_name} | was in failset, ok, moved to trainset | conf: {confidence:.3f} 🎉")
                 else:
                     if is_failset:
-                        print(f"LEARN: {base_name} | was in trainset, failed, moved to failset | conf: {confidence:.3f}")
+                        print(f"LEARN: {base_name} | was in trainset, failed, moved to failset | conf: {confidence:.3f} 😢")
                     else:
-                        print(f"LEARN: {base_name} | was in trainset, ok, stays in trainset | conf: {confidence:.3f}")
+                        print(f"LEARN: {base_name} | was in trainset, ok, stays in trainset | conf: {confidence:.3f} 😊")
                 
                 # Send OCR case to backend
                 try:
@@ -170,7 +170,7 @@ def main():
                     
                     case_data = {
                         'image_path': static_url,
-                        'ocr_text': gt_text if gt_text else f"OCR prediction for {base_name}",
+                        'ocr_text': gt_text,  # Send actual GT text (empty string if file is empty)
                         'confidence': confidence,
                         'gt_text': gt_text,
                         'is_failset': is_failset
@@ -179,9 +179,9 @@ def main():
                     response = requests.post(f"{args.backend_url}/api/cases", json=case_data, timeout=5)
                     if response.status_code == 200:
                         result = response.json()
-                        print(f"✓ Sent case {base_name} to backend (ID: {result.get('case_id', 'N/A')})")
-                        print(f"  Image URL: {static_url}")
-                        print(f"  Full URL: {args.backend_url}{static_url}")
+                        print(f"✅ Sent case {base_name} to backend (ID: {result.get('case_id', 'N/A')}) 📤")
+                        print(f"  Image URL: {static_url} 🖼️")
+                        print(f"  Full URL: {args.backend_url}{static_url} 🔗")
                     else:
                         print(f"✗ Failed to send case {base_name}: {response.status_code} - {response.text}")
                         
@@ -195,9 +195,9 @@ def main():
             
             # Send mock data to backend for demonstration
             if epoch % 5 == 0:  # Every 5 epochs
-                print(f"Sending progress data to backend...")
+                print(f"Sending progress data to backend... 📊")
         
-        print("\nTraining completed!")
+        print("\n🎉 Training completed! ✨")
         
     except KeyboardInterrupt:
         # This will be caught by signal handler
