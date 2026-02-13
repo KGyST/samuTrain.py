@@ -4,17 +4,28 @@ samuTrain V2 Training Script
 Train OCR model on specified dataset with configurable epochs
 """
 
-import sys
 import os
+import sys
+os.environ['TF_USE_LEGACY_KERAS'] = '1'
+import tensorflow as tf
+import keras
+sys.modules['tensorflow.keras'] = keras
+# Now the real calamari import
+from calamari_ocr.ocr.predict.predictor import Predictor
+
 import argparse
 import signal
 from pathlib import Path
+import json
+import time
+import random
+import requests
 
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-import requests
 from bridge import SamuTrainBridge
+from engines.calamari_learner import CalamariLearner
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
@@ -25,15 +36,22 @@ def signal_handler(sig, frame):
 def main():
     parser = argparse.ArgumentParser(description="Train samuTrain OCR model")
     parser.add_argument("--data-folder", default="data/single_case", 
-                       help="Path to training data folder (default: data/single_case)")
-    parser.add_argument("--epochs", type=int, default=-1,
-                       help="Number of training epochs (default: unlimited, -1)")
+                       help="Path to the training data folder")
+    parser.add_argument("--epochs", type=int, default=10,
+                       help="Number of training epochs (-1 for endless)")
     parser.add_argument("--confidence-threshold", type=float, default=0.8,
-                       help="Confidence threshold for failset detection (default: 0.8)")
+                       help="Confidence threshold for failset classification")
     parser.add_argument("--backend-url", default="http://127.0.0.1:8000",
-                       help="samuTrain backend URL (default: http://127.0.0.1:8000)")
-    
+                       help="Backend API URL")
     args = parser.parse_args()
+    
+    # Initialize learner
+    learner = CalamariLearner()
+    if learner.is_available():
+        print(f"🤖 Using learner: {learner.get_name()}")
+    
+    # Initialize bridge to backend
+    bridge = SamuTrainBridge(args.backend_url)
     
     # Set up signal handler for Ctrl+C
     signal.signal(signal.SIGINT, signal_handler)
@@ -41,7 +59,7 @@ def main():
     print("Starting samuTrain V2 Training Script")
     print("=" * 40)
     print(f"Data folder: {args.data_folder}")
-    print(f"Epochs: {'Unlimited' if args.epochs == -1 else args.epochs}")
+    print(f"Epochs: {'Endless' if args.epochs == -1 else args.epochs}")
     print(f"Confidence threshold: {args.confidence_threshold}")
     print(f"Backend URL: {args.backend_url}")
     print("Press Ctrl+C to stop training")
@@ -142,13 +160,17 @@ def main():
                 except Exception as e:
                     print(f"Warning: Could not read GT file {gt_path}: {e}")
                 
-                # Simulate OCR prediction with varying confidence
-                confidence = random.uniform(0.1, 1.0)
+                # OCR prediction using learner interface
+                ocr_text, confidence = learner.predict(str(png_file))
+                print(f"  🔍 {learner.get_name()} prediction: '{ocr_text}' (confidence: {confidence:.3f})")
                 was_failset = case_states.get(img_path, {}).get('is_failset', False)
                 
                 # Determine if this prediction passes confidence threshold
                 is_good_prediction = confidence >= args.confidence_threshold
                 is_failset = not is_good_prediction
+                
+                # Debug output for real prediction
+                print(f"   GT text: '{gt_text}'")
                 
                 # Log learning step with emojis
                 if was_failset:
@@ -170,7 +192,7 @@ def main():
                     
                     case_data = {
                         'image_path': static_url,
-                        'ocr_text': gt_text,  # Send actual GT text (empty string if file is empty)
+                        'ocr_text': ocr_text,  # Use real calamari prediction
                         'confidence': confidence,
                         'gt_text': gt_text,
                         'is_failset': is_failset

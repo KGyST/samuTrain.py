@@ -1,20 +1,40 @@
-import requests
-import json
 import os
+import sys
+os.environ['TF_USE_LEGACY_KERAS'] = '1'
+import tensorflow as tf
+import keras
+import tf_keras
+sys.modules['tensorflow.keras'] = keras
+sys.modules['tf_keras'] = tf_keras
+from calamari_ocr.ocr.predict.predictor import Predictor
+
+import requests
+
+import json
+
+import os
+
 import time
+
 from typing import List, Optional, Dict, Any
+
 from pathlib import Path
 
 # Try to import calamari with version handling
 try:
   import sys
   sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
-  from calamari_ocr import Trainer
+  # Trainer not used in current implementation
+  Trainer = None
   try:
     from calamari_ocr import __version__
     print(f"calamari-ocr version: {__version__}")
   except ImportError:
     print("calamari-ocr version not available, continuing anyway")
+    # Monkey-patch version if missing
+    import calamari_ocr
+    calamari_ocr.__version__ = '2.3.0'
+    print("Applied monkey-patch for calamari-ocr version")
 except ImportError as e:
   print(f"Failed to import calamari_ocr: {e}")
   print("Please ensure calamari-ocr is properly installed")
