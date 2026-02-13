@@ -1,5 +1,5 @@
-[submodule "src/engines/calamari"]
-	path = src/engines/calamari
+[submodule "lib/calamari"]
+	path = lib/calamari
 	url = https://github.com/Calamari-OCR/calamari.git
 
 [submodule "lib/samuLearnUI.ts"]

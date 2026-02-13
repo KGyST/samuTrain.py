@@ -7,6 +7,8 @@ from pathlib import Path
 
 # Try to import calamari with version handling
 try:
+  import sys
+  sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
   from calamari_ocr import Trainer
   try:
     from calamari_ocr import __version__
