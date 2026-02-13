@@ -37,28 +37,28 @@ def main():
     # Set up signal handler for Ctrl+C
     signal.signal(signal.SIGINT, signal_handler)
     
-    print("🚀 samuTrain V2 Training Script")
+    print("Starting samuTrain V2 Training Script")
     print("=" * 40)
-    print(f"📁 Data folder: {args.data_folder}")
-    print(f"🔢 Epochs: {'Unlimited' if args.epochs == -1 else args.epochs}")
-    print(f"📊 Confidence threshold: {args.confidence_threshold}")
-    print(f"🌐 Backend URL: {args.backend_url}")
-    print("⏹️  Press Ctrl+C to stop training")
+    print(f"Data folder: {args.data_folder}")
+    print(f"Epochs: {'Unlimited' if args.epochs == -1 else args.epochs}")
+    print(f"Confidence threshold: {args.confidence_threshold}")
+    print(f"Backend URL: {args.backend_url}")
+    print("Press Ctrl+C to stop training")
     print("=" * 40)
     
     # Validate data folder
     data_path = Path(args.data_folder)
     if not data_path.exists():
-        print(f"❌ Error: Data folder '{args.data_folder}' does not exist")
+        print(f"Error: Data folder '{args.data_folder}' does not exist")
         sys.exit(1)
     
     # Count training files
     png_files = list(data_path.glob("*.png"))
     if not png_files:
-        print(f"❌ Error: No PNG files found in '{args.data_folder}'")
+        print(f"Error: No PNG files found in '{args.data_folder}'")
         sys.exit(1)
     
-    print(f"📄 Found {len(png_files)} training files")
+    print(f"Found {len(png_files)} training files")
     
     # Initialize bridge
     bridge = SamuTrainBridge(
@@ -68,11 +68,11 @@ def main():
     
     # Test backend connection
     if not bridge.test_backend_connection():
-        print("❌ Error: Cannot connect to samuTrain backend")
-        print("💡 Please start the server with: python run_server.py")
+        print("Error: Cannot connect to samuTrain backend")
+        print("Please start the server with: python run_server.py")
         sys.exit(1)
     
-    print("✅ Backend connection successful")
+    print("Backend connection successful")
     
     # Prepare trainer configuration
     trainer_config = {
@@ -83,35 +83,71 @@ def main():
     }
     
     # Start training with monitoring
-    print("\n🎯 Starting training with real-time monitoring...")
-    print("📊 Training progress will be sent to samuTrain backend")
-    print("🔍 Low confidence predictions will be marked as failsets")
+    print("\nStarting training with real-time monitoring...")
+    print("Training progress will be sent to samuTrain backend")
+    print("Low confidence predictions will be marked as failsets")
     
     try:
         # Note: This is a placeholder for actual calamari training
         # The actual implementation depends on calamari's API
-        print("⚠️  Note: calamari training integration needs to be implemented")
-        print("🔧 This script currently demonstrates the monitoring setup")
+        print("Note: calamari training integration needs to be implemented")
+        print("This script currently demonstrates the monitoring setup")
+        print("Learning step logging enabled")
+        print("=" * 60)
         
         # Simulate training for demonstration
         import time
+        import random
         epoch = 0
+        
+        # Track case states for learning step logging
+        case_states = {}  # img_path -> {'is_failset': bool, 'confidence': float}
+        
         while args.epochs == -1 or epoch < args.epochs:
             epoch += 1
-            print(f"📈 Epoch {epoch} - Training in progress...")
+            print(f"\nEpoch {epoch} - Training in progress...")
+            
+            # Simulate training on each image file
+            for png_file in png_files:
+                img_path = str(png_file)
+                base_name = png_file.stem
+                
+                # Simulate OCR prediction with varying confidence
+                confidence = random.uniform(0.1, 1.0)
+                was_failset = case_states.get(img_path, {}).get('is_failset', False)
+                
+                # Determine if this prediction passes confidence threshold
+                is_good_prediction = confidence >= args.confidence_threshold
+                is_failset = not is_good_prediction
+                
+                # Log learning step
+                if was_failset:
+                    if is_failset:
+                        print(f"LEARN: {base_name} | was in failset, failed, stays in failset | conf: {confidence:.3f}")
+                    else:
+                        print(f"LEARN: {base_name} | was in failset, ok, moved to trainset | conf: {confidence:.3f}")
+                else:
+                    if is_failset:
+                        print(f"LEARN: {base_name} | was in trainset, failed, moved to failset | conf: {confidence:.3f}")
+                    else:
+                        print(f"LEARN: {base_name} | was in trainset, ok, stays in trainset | conf: {confidence:.3f}")
+                
+                # Update case state
+                case_states[img_path] = {'is_failset': is_failset, 'confidence': confidence}
+            
             time.sleep(2)  # Simulate training time
             
             # Send mock data to backend for demonstration
             if epoch % 5 == 0:  # Every 5 epochs
-                print(f"📊 Sending progress data to backend...")
+                print(f"Sending progress data to backend...")
         
-        print("\n✅ Training completed!")
+        print("\nTraining completed!")
         
     except KeyboardInterrupt:
         # This will be caught by signal handler
         pass
     except Exception as e:
-        print(f"❌ Training error: {e}")
+        print(f"Training error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+# samuTrain V2 Project Rules
+
+## Core Principles
+- **No Vibe Coding:** Do not rewrite existing logic unless explicitly asked. Focus on incremental improvements.
+- **Clean Architecture:** Keep the DAO pattern in `src/db.py`. Do not mix SQL with API logic in `src/main.py`.
+- **Decoupling:** `src/main.py` (FastAPI) should never depend on `calamari_ocr`. Only `src/bridge.py` handles OCR logic.
+
+## Environment & Shell (Critical)
+- **PowerShell 5.1 Only:** NEVER use `&&` or `||` in terminal commands. Use `;` for sequencing or run commands separately.
+- **Editable Libs:** Always use `pip install -e lib/calamari` if Calamari dependencies are missing.
+
+## Coding Standards
+- **Indentation:** Use 2 spaces strictly.
+- **Comments:** Use English only. No comments at the end of lines.
+- **Encoding:** Always use `encoding='utf-8'` when reading/writing `.gt.txt` or any text files.
+
+## Project Structure (Do Not Deviate)
+- `src/`: All Python logic.
+- `lib/`: Submodules only (calamari, samuLearnUI.ts).
+- `data/`: All OCR images and .gt.txt files. gitignored.
+- `.old/`: Move replaced files here instead of deleting them.
+
+## Specific Fixes
+- **Calamari Version:** If `__version__` is missing from `calamari_ocr`, use the monkey-patch in `src/bridge.py` or manually edit `lib/calamari/calamari_ocr/__init__.py`.
+- **Static Assets:** The backend mounts `data/` to `/static`. Ensure the API returns `/static/filename.png` for UI compatibility.

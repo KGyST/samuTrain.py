@@ -11,12 +11,15 @@ from db import Database
 
 app = FastAPI(title="samuTrain OCR Monitor", version="2.0")
 
+# Get data folder from environment variable or default to "data"
+DATA_FOLDER = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
+
 # Initialize database
 db = Database()
 
 # Mount static files for data directory
-if os.path.exists("data"):
-  app.mount("/static", StaticFiles(directory="data"), name="static")
+if os.path.exists(DATA_FOLDER):
+  app.mount("/static", StaticFiles(directory=DATA_FOLDER), name="static")
 
 class CaseRequest(BaseModel):
   image_path: str
