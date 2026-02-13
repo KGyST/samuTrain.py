@@ -96,7 +96,13 @@ async def create_case(case_request: CaseRequest):
 async def correct_case(case_id: int, correction: CorrectionRequest):
   """Correct a case and update GT file"""
   try:
+    print(f"=== CORRECTION API CALL ===")
+    print(f"Case ID: {case_id}")
+    print(f"Corrected text: '{correction.corrected_text}'")
+    
     success = db.update_case_correction(case_id, correction.corrected_text)
+    
+    print(f"Database update result: {success}")
     
     if success:
       return {"success": True, "message": "Case corrected successfully"}
@@ -105,6 +111,7 @@ async def correct_case(case_id: int, correction: CorrectionRequest):
   except HTTPException:
     raise
   except Exception as e:
+    print(f"Correction API error: {e}")
     raise HTTPException(status_code=500, detail=f"Correction failed: {str(e)}")
 
 @app.get("/api/statistics")

@@ -57,20 +57,56 @@ class Database:
       return dict(row) if row else None
   
   def update_case_correction(self, case_id: int, corrected_text: str) -> bool:
+    print(f"=== CORRECTION REQUEST ===")
+    print(f"Case ID: {case_id}")
+    print(f"Corrected text: '{corrected_text}'")
+    
     with sqlite3.connect(self.db_path) as conn:
       case = self.get_case_by_id(case_id)
       if not case:
+        print(f"ERROR: Case {case_id} not found")
         return False
       
       img_path = case['img_path']
+      print(f"Image path from database: {img_path}")
+      
+      # Handle static URLs - convert to actual file path
+      if img_path.startswith('/static/'):
+        # Get data folder from environment or default
+        data_folder = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
+        filename = img_path.replace('/static/', '')
+        # Convert test001.bin.png to test001.gt.txt
+        # Remove .bin and change .png to .gt.txt
+        print(f"Original filename: {filename}")
+        gt_filename = filename.replace('.bin', '').replace('.png', '.gt.txt')
+        gt_path = os.path.join(data_folder, gt_filename)
+        print(f"Converted static URL to GT path: {gt_path}")
+        print(f"GT filename: {gt_filename}")
+      else:
+        # Original file path
+        gt_path = img_path.rsplit('.', 1)[0] + '.gt.txt'
+        print(f"Using original GT path: {gt_path}")
       
       # Update .gt.txt file on disk
       try:
-        gt_path = img_path.rsplit('.', 1)[0] + '.gt.txt'
+        print(f"Attempting to write to GT file: {gt_path}")
+        print(f"File exists before write: {os.path.exists(gt_path)}")
+        print(f"Directory exists: {os.path.exists(os.path.dirname(gt_path))}")
+        
         with open(gt_path, 'w', encoding='utf-8') as f:
           f.write(corrected_text)
+        
+        print(f"Successfully wrote '{corrected_text}' to {gt_path}")
+        print(f"File exists after write: {os.path.exists(gt_path)}")
+        
+        # Verify content was written
+        with open(gt_path, 'r', encoding='utf-8') as f:
+          verify_content = f.read()
+        print(f"Verification - file content: '{verify_content}'")
+        
       except Exception as e:
         print(f"Failed to update GT file {gt_path}: {e}")
+        print(f"Exception type: {type(e).__name__}")
         return False
       
       # Update database
@@ -80,6 +116,8 @@ class Database:
         WHERE id = ?
       """, (corrected_text, case_id))
       conn.commit()
+      print(f"Database updated for case {case_id}")
+      print(f"=== CORRECTION COMPLETED ===")
       return True
   
   def get_statistics(self) -> Dict[str, Any]:

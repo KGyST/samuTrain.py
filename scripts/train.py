@@ -13,6 +13,7 @@ from pathlib import Path
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import requests
 from bridge import SamuTrainBridge
 
 def signal_handler(sig, frame):
@@ -103,6 +104,19 @@ def main():
         # Track case states for learning step logging
         case_states = {}  # img_path -> {'is_failset': bool, 'confidence': float}
         
+        # Initialize bridge for sending data to backend
+        bridge = SamuTrainBridge(
+            backend_url=args.backend_url,
+            confidence_threshold=args.confidence_threshold
+        )
+        
+        if not bridge.test_backend_connection():
+            print("Error: Cannot connect to samuTrain backend")
+            print("Please start the server with: python run_server.py")
+            sys.exit(1)
+        
+        print("Backend connection successful - will send OCR cases during training")
+        
         while args.epochs == -1 or epoch < args.epochs:
             epoch += 1
             print(f"\nEpoch {epoch} - Training in progress...")
@@ -111,6 +125,22 @@ def main():
             for png_file in png_files:
                 img_path = str(png_file)
                 base_name = png_file.stem
+                # Remove .bin from basename to match GT file naming
+                if base_name.endswith('.bin'):
+                    base_name = base_name.replace('.bin', '')
+                gt_path = png_file.parent / f"{base_name}.gt.txt"
+                
+                # Read ground truth if available
+                gt_text = ""
+                try:
+                    if gt_path.exists():
+                        with open(gt_path, 'r', encoding='utf-8') as f:
+                            gt_text = f.read().strip()
+                        print(f"  Read GT text from {gt_path}: '{gt_text}'")
+                    else:
+                        print(f"  GT file not found: {gt_path}")
+                except Exception as e:
+                    print(f"Warning: Could not read GT file {gt_path}: {e}")
                 
                 # Simulate OCR prediction with varying confidence
                 confidence = random.uniform(0.1, 1.0)
@@ -131,6 +161,32 @@ def main():
                         print(f"LEARN: {base_name} | was in trainset, failed, moved to failset | conf: {confidence:.3f}")
                     else:
                         print(f"LEARN: {base_name} | was in trainset, ok, stays in trainset | conf: {confidence:.3f}")
+                
+                # Send OCR case to backend
+                try:
+                    # Create image path for frontend static serving
+                    # Use the actual filename as it appears in the data folder
+                    static_url = f"/static/{png_file.name}"
+                    
+                    case_data = {
+                        'image_path': static_url,
+                        'ocr_text': gt_text if gt_text else f"OCR prediction for {base_name}",
+                        'confidence': confidence,
+                        'gt_text': gt_text,
+                        'is_failset': is_failset
+                    }
+                    
+                    response = requests.post(f"{args.backend_url}/api/cases", json=case_data, timeout=5)
+                    if response.status_code == 200:
+                        result = response.json()
+                        print(f"✓ Sent case {base_name} to backend (ID: {result.get('case_id', 'N/A')})")
+                        print(f"  Image URL: {static_url}")
+                        print(f"  Full URL: {args.backend_url}{static_url}")
+                    else:
+                        print(f"✗ Failed to send case {base_name}: {response.status_code} - {response.text}")
+                        
+                except Exception as e:
+                    print(f"✗ Error sending case {base_name}: {e}")
                 
                 # Update case state
                 case_states[img_path] = {'is_failset': is_failset, 'confidence': confidence}
