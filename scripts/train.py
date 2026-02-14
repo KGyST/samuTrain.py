@@ -8,10 +8,8 @@ import os
 import sys
 os.environ['TF_USE_LEGACY_KERAS'] = '1'
 import tensorflow as tf
-import keras
-sys.modules['tensorflow.keras'] = keras
 # Now the real calamari import
-from calamari_ocr.ocr.predict.predictor import Predictor
+from calamari_ocr.ocr.predict.predictor import MultiPredictor
 
 import argparse
 import signal
@@ -224,9 +222,9 @@ def main():
     except KeyboardInterrupt:
         # This will be caught by signal handler
         pass
-    except Exception as e:
-        print(f"Training error: {e}")
-        sys.exit(1)
+    # except Exception as e:
+    #     print(f"Training error: {e}")
+    #     sys.exit(1)
 
 if __name__ == "__main__":
     main()

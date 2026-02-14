@@ -1,12 +1,6 @@
 import os
-import sys
 os.environ['TF_USE_LEGACY_KERAS'] = '1'
-import tensorflow as tf
-import keras
-import tf_keras
-sys.modules['tensorflow.keras'] = keras
-sys.modules['tf_keras'] = tf_keras
-from calamari_ocr.ocr.predict.predictor import Predictor
+from calamari_ocr.ocr.predict.predictor import MultiPredictor
 
 import requests
 
