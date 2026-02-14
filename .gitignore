@@ -1,55 +1,54 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# *.py[cod]  # No .pyc, .pyo, .pyd files found
+# *$py.class  # No Java .class files found
+# *.so  # No .so files found
+# .Python  # No .Python directory found
+# build/  # No build directory found
+# develop-eggs/  # No develop-eggs directory found
+# dist/  # No dist directory found
+# downloads/  # No downloads directory found
+# eggs/  # No eggs directory found
+# .eggs/  # No .eggs directory found
+# lib/  # lib directory exists but contains samuLearnUI.ts submodule
+# lib64/  # No lib64 directory found
+# parts/  # No parts directory found
+# sdist/  # No sdist directory found
+# var/  # No var directory found
+# wheels/  # No wheels directory found
+# pip-wheel-metadata/  # No pip-wheel-metadata directory found
+# share/python-wheels/  # No share/python-wheels directory found
+# *.egg-info/  # No .egg-info directory found
+# .installed.cfg  # No .installed.cfg file found
+# *.egg  # No .egg files found
+# MANIFEST  # No MANIFEST file found
 
 # Virtual environments
 venv_310/*
 
 # Database
 *.db
-*.sqlite
-*.sqlite3
+# *.sqlite  # No .sqlite files found
+# *.sqlite3  # No .sqlite3 files found
 
 # Logs
-*.log
+# *.log  # No .log files found (train.log in models/ is ignored by models/)
 
 # Cache
-.cache/
+# .cache/  # No .cache directory found
 cache/
 
 # IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# .vscode/  # No .vscode directory found
+# .idea/  # No .idea directory found
+# *.swp  # No .swp files found
+# *.swo  # No .swo files found
 
 # OS
-.DS_Store
-Thumbs.db
+# .DS_Store  # No .DS_Store files found (macOS)
+# Thumbs.db  # No Thumbs.db files found (Windows)
 
 # Project specific
 models/
 .old/
 archive/
-lib/samuTeszt_python_0_03/*

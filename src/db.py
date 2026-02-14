@@ -56,6 +56,13 @@ class Database:
       row = cursor.fetchone()
       return dict(row) if row else None
   
+  def get_case_by_img_path(self, img_path: str) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(self.db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      cursor = conn.execute("SELECT * FROM cases WHERE img_path = ?", (img_path,))
+      row = cursor.fetchone()
+      return dict(row) if row else None
+
   def update_case_correction(self, case_id: int, corrected_text: str) -> bool:
     print(f"=== CORRECTION REQUEST ===")
     print(f"Case ID: {case_id}")
@@ -76,15 +83,18 @@ class Database:
         data_folder = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
         filename = img_path.replace('/static/', '')
         # Convert test001.bin.png to test001.gt.txt
-        # Remove .bin and change .png to .gt.txt
+        # Remove .bin.png and change to .gt.txt
         print(f"Original filename: {filename}")
-        gt_filename = filename.replace('.bin', '').replace('.png', '.gt.txt')
+        gt_filename = filename.replace('.bin.png', '.gt.txt')
         gt_path = os.path.join(data_folder, gt_filename)
         print(f"Converted static URL to GT path: {gt_path}")
         print(f"GT filename: {gt_filename}")
       else:
-        # Original file path
-        gt_path = img_path.rsplit('.', 1)[0] + '.gt.txt'
+        # Original file path - convert .bin.png to .gt.txt
+        if img_path.endswith('.bin.png'):
+            gt_path = img_path.replace('.bin.png', '.gt.txt')
+        else:
+            gt_path = img_path.rsplit('.', 1)[0] + '.gt.txt'
         print(f"Using original GT path: {gt_path}")
       
       # Update .gt.txt file on disk

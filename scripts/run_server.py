@@ -8,8 +8,9 @@ import sys
 import os
 import argparse
 
-# Add src to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Add src to Python path (using absolute path)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(project_root, 'src'))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Start samuTrain V2 Server")

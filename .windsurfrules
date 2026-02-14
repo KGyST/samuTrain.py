@@ -1,4 +1,12 @@
-# samuTrain V2 Project Rules
+# Project Specification: samuTrain V2
+- Core: OCR engine using Calamari 2.3.1 (source in lib/calamari).
+- Database: Built-in sqlite3 (FOSS only).
+- Structure: Logic in src/, Entry scripts in scripts/.
+- Path Management: Always ensure src/ and project root are in sys.path.
+- Constraints: Use 2-space indentation, no end-of-line comments, keep code dense.
+- Current Status: 90% complete, moving to full web process with 64 test cases.
+
+# Project Rules
 
 ## Core Principles
 - **No Vibe Coding:** Do not rewrite existing logic unless explicitly asked. Focus on incremental improvements.
