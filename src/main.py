@@ -116,15 +116,19 @@ def sync_database_with_folder():
         
       else:
         # Run real OCR prediction for existing cases to check learning progress
-        # But skip OCR update for user-corrected cases to preserve corrections
+        # Always update model_prediction with latest OCR result
+        full_image_path = os.path.abspath(png_path)  # Use absolute path directly
+        ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
+        
+        # Always update the latest model prediction
+        db.update_model_prediction(existing_case['id'], ocr_text)
+        
+        # But skip updating ocr_text/confidence for user-corrected cases to preserve corrections
         if not existing_case.get('is_corrected', False):
-          full_image_path = os.path.abspath(png_path)  # Use absolute path directly
-          ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
-          
-          # Update OCR result and confidence in database
+          # Update OCR result and confidence in database for uncorrected cases
           db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
         else:
-          # For corrected cases, use the stored OCR result
+          # For corrected cases, use the stored OCR result for logging
           ocr_text = existing_case.get('ocr_text', '')
           confidence = existing_case.get('confidence', 0.8)
         
@@ -225,7 +229,8 @@ try:
       ocr_text=ocr_text,
       confidence=confidence,
       gt_text=gt_text,
-      is_failset=False
+      is_failset=False,
+      model_prediction=ocr_text
     )
     cases_count += 1
     

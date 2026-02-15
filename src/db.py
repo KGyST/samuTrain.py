@@ -15,6 +15,7 @@ class Database:
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           img_path TEXT NOT NULL,
           ocr_text TEXT NOT NULL,
+          model_prediction TEXT,
           gt_text TEXT,
           confidence REAL NOT NULL,
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -25,12 +26,13 @@ class Database:
       conn.commit()
   
   def insert_case(self, img_path: str, ocr_text: str, confidence: float, 
-                  gt_text: Optional[str] = None, is_failset: bool = False) -> int:
+                  gt_text: Optional[str] = None, is_failset: bool = False, 
+                  model_prediction: Optional[str] = None) -> int:
     with sqlite3.connect(self.db_path) as conn:
       cursor = conn.execute("""
-        INSERT INTO cases (img_path, ocr_text, gt_text, confidence, is_failset)
-        VALUES (?, ?, ?, ?, ?)
-      """, (img_path, ocr_text, gt_text, confidence, is_failset))
+        INSERT INTO cases (img_path, ocr_text, model_prediction, gt_text, confidence, is_failset)
+        VALUES (?, ?, ?, ?, ?, ?)
+      """, (img_path, ocr_text, model_prediction, gt_text, confidence, is_failset))
       conn.commit()
       return cursor.lastrowid
   
@@ -169,6 +171,17 @@ class Database:
         return True
     except Exception as e:
       print(f"Error updating failset status: {e}")
+      return False
+
+  def update_model_prediction(self, case_id: int, model_prediction: str) -> bool:
+    """Update the model_prediction field only"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("UPDATE cases SET model_prediction = ? WHERE id = ?", (model_prediction, case_id))
+        conn.commit()
+        return True
+    except Exception as e:
+      print(f"Error updating model prediction: {e}")
       return False
 
   def get_statistics(self) -> Dict[str, Any]:
