@@ -1,15 +1,23 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
-import json
+import sys
 import sqlite3
+import threading
+import time
+import argparse
+import json
 from datetime import datetime
 
+# Add src to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from db import Database
+from bridge import OCRBridge
 
 app = FastAPI(title="samuTrain OCR Monitor", version="2.0")
 
@@ -28,22 +36,41 @@ DATA_FOLDER = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
 # Initialize database
 db = Database()
 
+# Initialize OCR bridge
+ocr_bridge = OCRBridge()
+print(f"🔧 OCR Bridge Status: {ocr_bridge.get_learner_info()}")
+
 # Folder polling and synchronization
 import threading
 import time
 from pathlib import Path
 
+# Learning progress counter
+learning_step_counter = 0
+
 def sync_database_with_folder():
   """Synchronize database with actual data folder contents"""
+  global learning_step_counter
+  learning_step_counter += 1
+  
   try:
     import glob
     
+    # Only print learning steps every 5 cycles to reduce noise
+    if learning_step_counter % 5 == 1:
+      print(f"🔄 Learning Step #{learning_step_counter} - Scanning {DATA_FOLDER}")
+    
     # Get all PNG files in data folder
-    png_files = glob.glob(os.path.join(DATA_FOLDER, "**/*.png"), recursive=True)
+    png_files = []
+    for root, dirs, files in os.walk(DATA_FOLDER):
+      for file in files:
+        if file.endswith('.png'):
+          png_files.append(os.path.join(root, file))
+    
     current_files = set()
     
     for png_path in png_files:
-      rel_path = os.path.relpath(png_path)
+      rel_path = os.path.relpath(png_path, DATA_FOLDER)  # Relative to DATA_FOLDER
       current_files.add(rel_path)
       
       # Look for corresponding .gt.txt file
@@ -55,18 +82,19 @@ def sync_database_with_folder():
       
       # Debug: Log GT text status for sync
       has_gt = gt_text and gt_text.strip()
-      print(f"🔄 SYNC {rel_path}: GT exists={os.path.exists(gt_path)}, GT text='{gt_text}', has_content={has_gt}")
       
       # Check if case exists
       existing_case = db.get_case_by_img_path(rel_path)
       
       if not existing_case:
-        # Add new case
-        confidence = 0.85 if has_gt else 0.60
-        print(f"📊 SYNC {rel_path}: New confidence={confidence}, has_gt={has_gt}, gt_text_length={len(gt_text) if gt_text else 0}")
+        # Run real OCR prediction
+        full_image_path = os.path.abspath(png_path)  # Use absolute path directly
+        ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
+        
+        print(f"📊 {rel_path}: OCR='{ocr_text}', confidence={confidence:.3f}, has_gt={has_gt}")
         case_id = db.insert_case(
           img_path=rel_path,
-          ocr_text=gt_text or "OCR_RESULT_PLACEHOLDER",
+          ocr_text=ocr_text,
           confidence=confidence,
           gt_text=gt_text,
           is_failset=False
@@ -75,7 +103,7 @@ def sync_database_with_folder():
         
         # Log learning progress for new cases
         if has_gt:
-          ocr_result = gt_text or "OCR_RESULT_PLACEHOLDER"
+          ocr_result = ocr_text
           gt_result = gt_text
           test_passes = (ocr_result == gt_result)
           
@@ -87,9 +115,22 @@ def sync_database_with_folder():
             db.update_case_failset_status(case_id, True)
         
       else:
+        # Run real OCR prediction for existing cases to check learning progress
+        # But skip OCR update for user-corrected cases to preserve corrections
+        if not existing_case.get('is_corrected', False):
+          full_image_path = os.path.abspath(png_path)  # Use absolute path directly
+          ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
+          
+          # Update OCR result and confidence in database
+          db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
+        else:
+          # For corrected cases, use the stored OCR result
+          ocr_text = existing_case.get('ocr_text', '')
+          confidence = existing_case.get('confidence', 0.8)
+        
         # Log learning progress for existing cases (even if no changes)
         if has_gt:
-          ocr_result = existing_case.get('ocr_text', 'OCR_RESULT_PLACEHOLDER')
+          ocr_result = ocr_text
           gt_result = gt_text
           was_failset = existing_case.get('is_failset', False)
           
@@ -114,19 +155,11 @@ def sync_database_with_folder():
             # Case 4: Failset → Failset (was in failset, test fails, stays in failset)
             print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→FAILSET")
         
-        # Update GT text if file changed
+        # Update database if GT file changed (but NEVER write back to GT files)
         if gt_text != existing_case.get('gt_text'):
-          db.update_case_correction(existing_case['id'], gt_text or existing_case.get('ocr_text', ''))
-          print(f"🔄 Updated case: {rel_path}")
-          
-          # Log learning progress for updates
-          if has_gt:
-            ocr_result = existing_case.get('ocr_text', 'OCR_RESULT_PLACEHOLDER')
-            gt_result = gt_text
-            if ocr_result == gt_result:
-              print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (updated)")
-            else:
-              print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET -> FAILSET (updated)")
+          # Only update database, never write to GT files in background sync
+          db.update_case_gt_text(existing_case['id'], gt_text)
+          print(f"🔄 Updated database for case: {rel_path} (GT file changed)")
     
     # Remove cases that no longer exist in folder
     all_cases = db.get_cases(limit=1000)
@@ -140,12 +173,14 @@ def sync_database_with_folder():
     print(f"⚠️  Sync error: {e}")
 
 def folder_polling_worker():
-  """Background thread that polls the data folder for changes"""
-  print(f"🔍 Starting folder polling for: {DATA_FOLDER}")
-  
+  """Background thread that polls data folder for changes"""
   while True:
-    time.sleep(5)  # Poll every 5 seconds
-    sync_database_with_folder()
+    try:
+      sync_database_with_folder()
+      time.sleep(2)  # Reduced from 5 seconds to 2 seconds for more frequent learning
+    except Exception as e:
+      print(f"⚠️  Folder polling error: {e}")
+      time.sleep(5)
 
 # Start background polling thread
 polling_thread = threading.Thread(target=folder_polling_worker, daemon=True)
@@ -179,14 +214,15 @@ try:
     has_gt = gt_text and gt_text.strip()
     print(f"🔍 {rel_path}: GT exists={os.path.exists(gt_path)}, GT text='{gt_text}', has_content={has_gt}")
     
-    # Create case with mock OCR data for now
-    # Use realistic confidence based on whether we have GT text
-    confidence = 0.85 if has_gt else 0.60
-    print(f"📊 {rel_path}: Confidence={confidence}")
+    # Create case with real OCR prediction
+    full_image_path = os.path.abspath(png_path)  # Use absolute path directly
+    ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
+    
+    print(f"📊 {rel_path}: OCR='{ocr_text}', confidence={confidence:.3f}")
     
     case_id = db.insert_case(
       img_path=rel_path,
-      ocr_text=gt_text or "OCR_RESULT_PLACEHOLDER",
+      ocr_text=ocr_text,
       confidence=confidence,
       gt_text=gt_text,
       is_failset=False
@@ -195,7 +231,7 @@ try:
     
     # Log learning progress for auto-initialization
     if has_gt:
-      ocr_result = gt_text or "OCR_RESULT_PLACEHOLDER"
+      ocr_result = ocr_text
       gt_result = gt_text
       test_passes = (ocr_result == gt_result)
       
@@ -264,20 +300,23 @@ async def get_cases(limit: int = 100, failset_only: bool = False):
       case['is_corrected'] = bool(case['is_corrected'])
       case['is_failset'] = bool(case['is_failset'])
       
-      # Add image URL for frontend
-      img_path = case['img_path'].replace('\\', '/')  # Convert backslashes to forward slashes
+      # Add image URL for frontend - include data folder for cache busting
+      img_path = case['img_path']
+      img_path_normalized = img_path.replace('\\', '/')  # Normalize path separators
       
-      if img_path.startswith('./data/'):
-        # Remove the ./data/ prefix and convert to static URL
-        rel_path = img_path.replace('./data/', '')
-        case['image_path'] = f"/static/{rel_path}"
-      elif img_path.startswith('data/'):
-        # Remove the data/ prefix and convert to static URL
-        rel_path = img_path.replace('data/', '')
-        case['image_path'] = f"/static/{rel_path}"
+      # Extract the data folder name from DATA_FOLDER for URL generation
+      data_folder_name = os.path.basename(DATA_FOLDER.rstrip('/\\'))
+      
+      # Find the relative path within the data folder
+      # The path should be data/folder/filename.png, so we need folder/filename.png
+      if f"{data_folder_name}/" in img_path_normalized:
+        # Extract everything after the folder name
+        rel_path = img_path_normalized.split(f"{data_folder_name}/", 1)[1]
+        case['image_path'] = f"/static/{data_folder_name}/{rel_path}"
       else:
-        # Use the path as-is for static URL
-        case['image_path'] = f"/static/{img_path}"
+        # Fallback - just use the filename with folder prefix
+        filename = os.path.basename(img_path_normalized)
+        case['image_path'] = f"/static/{data_folder_name}/{filename}"
     
     return cases
   except Exception as e:

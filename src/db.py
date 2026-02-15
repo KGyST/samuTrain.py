@@ -126,7 +126,7 @@ class Database:
         print(f"Exception type: {type(e).__name__}")
         return False
       
-      # Update database
+      # Update database - store user correction as both GT and OCR
       conn.execute("""
         UPDATE cases 
         SET gt_text = ?, ocr_text = ?, is_corrected = TRUE 
@@ -137,6 +137,29 @@ class Database:
       print(f"=== CORRECTION COMPLETED ===")
       return True
   
+  def update_case_ocr_result(self, case_id: int, ocr_text: str, confidence: float) -> bool:
+    """Update OCR result and confidence for a case"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("UPDATE cases SET ocr_text = ?, confidence = ? WHERE id = ?", 
+                    (ocr_text, float(confidence), case_id))
+        conn.commit()
+        return True
+    except Exception as e:
+      print(f"Error updating OCR result: {e}")
+      return False
+
+  def update_case_gt_text(self, case_id: int, gt_text: str) -> bool:
+    """Update GT text in database only (does not write to GT file)"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("UPDATE cases SET gt_text = ? WHERE id = ?", (gt_text, case_id))
+        conn.commit()
+        return True
+    except Exception as e:
+      print(f"Error updating GT text: {e}")
+      return False
+
   def update_case_failset_status(self, case_id: int, is_failset: bool) -> bool:
     """Update the failset status of a case"""
     try:
