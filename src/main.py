@@ -73,16 +73,47 @@ def sync_database_with_folder():
         )
         print(f"➕ Added new case: {rel_path}")
         
-        # Log learning progress
+        # Log learning progress for new cases
         if has_gt:
           ocr_result = gt_text or "OCR_RESULT_PLACEHOLDER"
           gt_result = gt_text
-          if ocr_result == gt_result:
-            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK")
+          test_passes = (ocr_result == gt_result)
+          
+          if test_passes:
+            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (NEW→TRAINSET)")
           else:
-            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET -> FAILSET")
+            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' NEW→FAILSET")
+            # Update database to move to failset
+            db.update_case_failset_status(case_id, True)
         
       else:
+        # Log learning progress for existing cases (even if no changes)
+        if has_gt:
+          ocr_result = existing_case.get('ocr_text', 'OCR_RESULT_PLACEHOLDER')
+          gt_result = gt_text
+          was_failset = existing_case.get('is_failset', False)
+          
+          # Determine if test passes (OCR matches GT)
+          test_passes = (ocr_result == gt_result)
+          
+          # Apply 4-case learning logic
+          if not was_failset and test_passes:
+            # Case 1: Trainset → Trainset (was in trainset, test OK, stays in trainset)
+            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (TRAINSET→TRAINSET)")
+          elif not was_failset and not test_passes:
+            # Case 2: Trainset → Failset (was in trainset, test fails, goes to failset)
+            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET→FAILSET")
+            # Update database to move to failset
+            db.update_case_failset_status(existing_case['id'], True)
+          elif was_failset and test_passes:
+            # Case 3: Failset → Trainset (was in failset, test OK, goes to trainset)
+            print(f"✅ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→TRAINSET")
+            # Update database to move back to trainset
+            db.update_case_failset_status(existing_case['id'], False)
+          elif was_failset and not test_passes:
+            # Case 4: Failset → Failset (was in failset, test fails, stays in failset)
+            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→FAILSET")
+        
         # Update GT text if file changed
         if gt_text != existing_case.get('gt_text'):
           db.update_case_correction(existing_case['id'], gt_text or existing_case.get('ocr_text', ''))
@@ -161,6 +192,19 @@ try:
       is_failset=False
     )
     cases_count += 1
+    
+    # Log learning progress for auto-initialization
+    if has_gt:
+      ocr_result = gt_text or "OCR_RESULT_PLACEHOLDER"
+      gt_result = gt_text
+      test_passes = (ocr_result == gt_result)
+      
+      if test_passes:
+        print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (AUTO→TRAINSET)")
+      else:
+        print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' AUTO→FAILSET")
+        # Update database to move to failset
+        db.update_case_failset_status(case_id, True)
   
   if cases_count > 0:
     print(f"📊 Auto-initialized {cases_count} cases from {DATA_FOLDER}")

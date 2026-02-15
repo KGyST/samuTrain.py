@@ -137,6 +137,17 @@ class Database:
       print(f"=== CORRECTION COMPLETED ===")
       return True
   
+  def update_case_failset_status(self, case_id: int, is_failset: bool) -> bool:
+    """Update the failset status of a case"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("UPDATE cases SET is_failset = ? WHERE id = ?", (is_failset, case_id))
+        conn.commit()
+        return True
+    except Exception as e:
+      print(f"Error updating failset status: {e}")
+      return False
+
   def get_statistics(self) -> Dict[str, Any]:
     with sqlite3.connect(self.db_path) as conn:
       conn.row_factory = sqlite3.Row
