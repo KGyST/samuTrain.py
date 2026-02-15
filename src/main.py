@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import os
 import json
+import sqlite3
 from datetime import datetime
 
 from db import Database
@@ -26,6 +27,98 @@ DATA_FOLDER = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
 
 # Initialize database
 db = Database()
+
+# Folder polling and synchronization
+import threading
+import time
+from pathlib import Path
+
+def sync_database_with_folder():
+  """Synchronize database with actual data folder contents"""
+  try:
+    import glob
+    
+    # Get all PNG files in data folder
+    png_files = glob.glob(os.path.join(DATA_FOLDER, "**/*.png"), recursive=True)
+    current_files = set()
+    
+    for png_path in png_files:
+      rel_path = os.path.relpath(png_path)
+      current_files.add(rel_path)
+      
+      # Look for corresponding .gt.txt file
+      gt_path = png_path.replace('.bin.png', '.gt.txt')
+      gt_text = None
+      if os.path.exists(gt_path):
+        with open(gt_path, 'r', encoding='utf-8') as f:
+          gt_text = f.read().strip()
+      
+      # Debug: Log GT text status for sync
+      has_gt = gt_text and gt_text.strip()
+      print(f"🔄 SYNC {rel_path}: GT exists={os.path.exists(gt_path)}, GT text='{gt_text}', has_content={has_gt}")
+      
+      # Check if case exists
+      existing_case = db.get_case_by_img_path(rel_path)
+      
+      if not existing_case:
+        # Add new case
+        confidence = 0.85 if has_gt else 0.60
+        print(f"📊 SYNC {rel_path}: New confidence={confidence}, has_gt={has_gt}, gt_text_length={len(gt_text) if gt_text else 0}")
+        case_id = db.insert_case(
+          img_path=rel_path,
+          ocr_text=gt_text or "OCR_RESULT_PLACEHOLDER",
+          confidence=confidence,
+          gt_text=gt_text,
+          is_failset=False
+        )
+        print(f"➕ Added new case: {rel_path}")
+        
+        # Log learning progress
+        if has_gt:
+          ocr_result = gt_text or "OCR_RESULT_PLACEHOLDER"
+          gt_result = gt_text
+          if ocr_result == gt_result:
+            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK")
+          else:
+            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET -> FAILSET")
+        
+      else:
+        # Update GT text if file changed
+        if gt_text != existing_case.get('gt_text'):
+          db.update_case_correction(existing_case['id'], gt_text or existing_case.get('ocr_text', ''))
+          print(f"🔄 Updated case: {rel_path}")
+          
+          # Log learning progress for updates
+          if has_gt:
+            ocr_result = existing_case.get('ocr_text', 'OCR_RESULT_PLACEHOLDER')
+            gt_result = gt_text
+            if ocr_result == gt_result:
+              print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (updated)")
+            else:
+              print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET -> FAILSET (updated)")
+    
+    # Remove cases that no longer exist in folder
+    all_cases = db.get_cases(limit=1000)
+    for case in all_cases:
+      if case['img_path'] not in current_files:
+        # Delete case from database
+        if db.delete_case_by_img_path(case['img_path']):
+          print(f"🗑️  Removed case: {case['img_path']}")
+    
+  except Exception as e:
+    print(f"⚠️  Sync error: {e}")
+
+def folder_polling_worker():
+  """Background thread that polls the data folder for changes"""
+  print(f"🔍 Starting folder polling for: {DATA_FOLDER}")
+  
+  while True:
+    time.sleep(5)  # Poll every 5 seconds
+    sync_database_with_folder()
+
+# Start background polling thread
+polling_thread = threading.Thread(target=folder_polling_worker, daemon=True)
+polling_thread.start()
 
 # Auto-initialize database with data from folder on startup
 try:
@@ -51,9 +144,14 @@ try:
       with open(gt_path, 'r', encoding='utf-8') as f:
         gt_text = f.read().strip()
     
+    # Debug: Log GT text status
+    has_gt = gt_text and gt_text.strip()
+    print(f"🔍 {rel_path}: GT exists={os.path.exists(gt_path)}, GT text='{gt_text}', has_content={has_gt}")
+    
     # Create case with mock OCR data for now
     # Use realistic confidence based on whether we have GT text
-    confidence = 0.85 if gt_text and gt_text.strip() else 0.60
+    confidence = 0.85 if has_gt else 0.60
+    print(f"📊 {rel_path}: Confidence={confidence}")
     
     case_id = db.insert_case(
       img_path=rel_path,
@@ -70,8 +168,12 @@ except Exception as e:
   print(f"⚠️  Failed to auto-initialize database: {e}")
 
 # Mount static files for data directory
-if os.path.exists(DATA_FOLDER):
-  app.mount("/static", StaticFiles(directory=DATA_FOLDER), name="static")
+parent_dir = os.path.dirname(DATA_FOLDER) if os.path.dirname(DATA_FOLDER) else "."
+if os.path.exists(parent_dir):
+  app.mount("/static", StaticFiles(directory=parent_dir), name="static")
+  print(f"📁 Static files mounted from: {parent_dir}")
+else:
+  print(f"⚠️  Parent directory not found: {parent_dir}")
 
 class CaseRequest(BaseModel):
   image_path: str
@@ -124,23 +226,38 @@ async def get_cases(limit: int = 100, failset_only: bool = False):
       if img_path.startswith('./data/'):
         # Remove the ./data/ prefix and convert to static URL
         rel_path = img_path.replace('./data/', '')
-        # Extract just the filename for static URL
-        filename = rel_path.split('/')[-1]
-        case['image_path'] = f"/static/{filename}"
+        case['image_path'] = f"/static/{rel_path}"
       elif img_path.startswith('data/'):
         # Remove the data/ prefix and convert to static URL
         rel_path = img_path.replace('data/', '')
-        # Extract just the filename for static URL
-        filename = rel_path.split('/')[-1]
-        case['image_path'] = f"/static/{filename}"
+        case['image_path'] = f"/static/{rel_path}"
       else:
-        # Extract just the filename for static URL
-        filename = img_path.split('/')[-1]
-        case['image_path'] = f"/static/{filename}"
+        # Use the path as-is for static URL
+        case['image_path'] = f"/static/{img_path}"
     
     return cases
   except Exception as e:
     raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/api/debug")
+async def debug_cases():
+  """Debug endpoint to show case details"""
+  try:
+    cases = db.get_cases(limit=5)
+    debug_info = []
+    for case in cases:
+      debug_info.append({
+        'id': case['id'],
+        'img_path': case['img_path'],
+        'ocr_text': case['ocr_text'],
+        'gt_text': case['gt_text'],
+        'confidence': case['confidence'],
+        'gt_text_length': len(case['gt_text']) if case['gt_text'] else 0,
+        'gt_text_empty': not case['gt_text'] or not case['gt_text'].strip()
+      })
+    return {"debug_info": debug_info}
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
 
 @app.get("/api/version")
 async def get_version():
@@ -236,6 +353,22 @@ async def initialize_from_data_folder():
     return {"success": True, "cases_created": cases_created, "message": f"Initialized {cases_created} cases from data folder"}
   except Exception as e:
     raise HTTPException(status_code=500, detail=f"Failed to initialize: {str(e)}")
+
+@app.post("/api/reset")
+async def reset_database():
+  """Reset database and re-initialize from data folder"""
+  try:
+    # Delete database file
+    if os.path.exists("samu.db"):
+      os.remove("samu.db")
+    
+    # Re-initialize database
+    db.init_database()
+    
+    # Re-run initialization
+    return await initialize_from_data_folder()
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Failed to reset database: {str(e)}")
 
 @app.get("/api/health")
 async def health_check():

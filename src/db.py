@@ -63,6 +63,13 @@ class Database:
       row = cursor.fetchone()
       return dict(row) if row else None
 
+  def delete_case_by_img_path(self, img_path: str) -> bool:
+    """Delete case by image path"""
+    with sqlite3.connect(self.db_path) as conn:
+      cursor = conn.execute("DELETE FROM cases WHERE img_path = ?", (img_path,))
+      conn.commit()
+      return cursor.rowcount > 0
+
   def update_case_correction(self, case_id: int, corrected_text: str) -> bool:
     print(f"=== CORRECTION REQUEST ===")
     print(f"Case ID: {case_id}")
@@ -122,9 +129,9 @@ class Database:
       # Update database
       conn.execute("""
         UPDATE cases 
-        SET gt_text = ?, is_corrected = TRUE 
+        SET gt_text = ?, ocr_text = ?, is_corrected = TRUE 
         WHERE id = ?
-      """, (corrected_text, case_id))
+      """, (corrected_text, corrected_text, case_id))
       conn.commit()
       print(f"Database updated for case {case_id}")
       print(f"=== CORRECTION COMPLETED ===")
