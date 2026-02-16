@@ -9,21 +9,33 @@ class Database:
     self.init_database()
   
   def init_database(self):
-    with sqlite3.connect(self.db_path) as conn:
-      conn.execute("""
-        CREATE TABLE IF NOT EXISTS cases (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          img_path TEXT NOT NULL,
-          ocr_text TEXT NOT NULL,
-          model_prediction TEXT,
-          gt_text TEXT,
-          confidence REAL NOT NULL,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-          is_corrected BOOLEAN DEFAULT FALSE,
-          is_failset BOOLEAN DEFAULT FALSE
-        )
-      """)
-      conn.commit()
+    print(f"🔧 Initializing database at: {self.db_path}")
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("""
+          CREATE TABLE IF NOT EXISTS cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            img_path TEXT NOT NULL,
+            ocr_text TEXT NOT NULL,
+            model_prediction TEXT,
+            gt_text TEXT,
+            confidence REAL NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_corrected BOOLEAN DEFAULT FALSE,
+            is_failset BOOLEAN DEFAULT FALSE
+          )
+        """)
+        conn.commit()
+        print("✅ Database table created successfully")
+        
+        # Verify table exists
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cases'")
+        if cursor.fetchone():
+          print("✅ Verified: 'cases' table exists")
+        else:
+          print("❌ Error: 'cases' table not found after creation")
+    except Exception as e:
+      print(f"❌ Database initialization error: {e}")
   
   def insert_case(self, img_path: str, ocr_text: str, confidence: float, 
                   gt_text: Optional[str] = None, is_failset: bool = False, 
@@ -185,6 +197,7 @@ class Database:
       return False
 
   def get_statistics(self) -> Dict[str, Any]:
+    """Get system statistics"""
     with sqlite3.connect(self.db_path) as conn:
       conn.row_factory = sqlite3.Row
       
@@ -217,3 +230,70 @@ class Database:
         'recent_activity': recent_activity,
         'failset_ratio': failset_ratio
       }
+
+  def reset_database(self):
+    """Reset database by dropping and recreating tables instead of deleting file"""
+    print(f"🧹 Resetting database at: {self.db_path}")
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        cursor = conn.cursor()
+        # Drop existing tables
+        cursor.execute("DROP TABLE IF EXISTS cases")
+        print("🗑️  Dropped existing tables")
+        
+        # Recreate tables
+        self.init_database()
+        
+        conn.commit()
+        print("✅ Database reset complete (schema wiped, file kept)")
+        return True
+    except Exception as e:
+      print(f"⚠️ Reset failed: {e}")
+      return False
+
+# Global database instance
+db = Database()
+
+# Global functions for backward compatibility
+def get_db_connection():
+    """Get database connection (for backward compatibility)"""
+    return sqlite3.connect(db.db_path)
+
+def init_database():
+    """Initialize database (for backward compatibility)"""
+    db.init_database()
+
+def get_cases(limit: int = 100, failset_only: bool = False):
+    return db.get_cases(limit, failset_only)
+
+def get_case_by_id(case_id: int):
+    return db.get_case_by_id(case_id)
+
+def get_case_by_img_path(img_path: str):
+    return db.get_case_by_img_path(img_path)
+
+def insert_case(img_path: str, ocr_text: str, confidence: float, 
+               gt_text: Optional[str] = None, is_failset: bool = False, 
+               model_prediction: Optional[str] = None):
+    return db.insert_case(img_path, ocr_text, confidence, gt_text, is_failset, model_prediction)
+
+def update_case_correction(case_id: int, corrected_text: str):
+    return db.update_case_correction(case_id, corrected_text)
+
+def update_case_ocr_result(case_id: int, ocr_text: str, confidence: float):
+    return db.update_case_ocr_result(case_id, ocr_text, confidence)
+
+def update_case_gt_text(case_id: int, gt_text: str):
+    return db.update_case_gt_text(case_id, gt_text)
+
+def update_case_failset_status(case_id: int, is_failset: bool):
+    return db.update_case_failset_status(case_id, is_failset)
+
+def update_model_prediction(case_id: int, model_prediction: str):
+    return db.update_model_prediction(case_id, model_prediction)
+
+def delete_case_by_img_path(img_path: str):
+    return db.delete_case_by_img_path(img_path)
+
+def get_statistics():
+    return db.get_statistics()

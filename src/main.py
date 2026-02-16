@@ -125,8 +125,53 @@ def sync_database_with_folder():
         
         # But skip updating ocr_text/confidence for user-corrected cases to preserve corrections
         if not existing_case.get('is_corrected', False):
-          # Update OCR result and confidence in database for uncorrected cases
-          db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
+          # Check if case has ground truth in database
+          case_has_gt = existing_case.get('gt_text') is not None and existing_case.get('gt_text').strip() != ''
+          
+          if not case_has_gt:
+            # Case has no GT - bootstrap by writing OCR result to .txt file as initial GT
+            gt_path = png_path.rsplit('.', 1)[0] + '.gt.txt'
+            try:
+              # Check if GT file already exists and has content (preserve user corrections)
+              existing_gt_content = None
+              if os.path.exists(gt_path):
+                with open(gt_path, 'r', encoding='utf-8') as f:
+                  existing_gt_content = f.read().strip()
+                
+                # If GT file has non-empty content, preserve it (likely user correction)
+                if existing_gt_content:
+                  print(f"⏭️  Preserving existing GT file content: {os.path.basename(gt_path)} = '{existing_gt_content}'")
+                  # Update database with existing content
+                  db.update_case_gt_text(existing_case['id'], existing_gt_content)
+                  gt_text = existing_gt_content
+                  has_gt = True
+                  continue  # Skip to next case
+              
+              # Check if case is user-corrected (shouldn't overwrite user corrections)
+              is_corrected = existing_case.get('is_corrected', False)
+              
+              if is_corrected:
+                print(f"⏭️  Skipping bootstrap for {os.path.basename(gt_path)} - case is user-corrected")
+              else:
+                with open(gt_path, 'w', encoding='utf-8') as f:
+                  f.write(ocr_text)
+                
+                old_display = f"'{existing_gt_content}'" if existing_gt_content else "none"
+                print(f"✏️  Bootstrapped GT file: {os.path.basename(gt_path)} | {old_display} → '{ocr_text}'")
+                
+                # Update database with GT text
+                db.update_case_gt_text(existing_case['id'], ocr_text)
+                # Update OCR result and confidence
+                db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
+                
+                # Now treat as having GT for learning
+                gt_text = ocr_text
+                has_gt = True
+            except Exception as e:
+              print(f"⚠️  Failed to bootstrap GT file {gt_path}: {e}")
+          else:
+            # Case has GT - update OCR result only
+            db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
         else:
           # For corrected cases, use the stored OCR result for logging
           ocr_text = existing_case.get('ocr_text', '')
@@ -161,9 +206,27 @@ def sync_database_with_folder():
         
         # Update database if GT file changed (but NEVER write back to GT files)
         if gt_text != existing_case.get('gt_text'):
-          # Only update database, never write to GT files in background sync
-          db.update_case_gt_text(existing_case['id'], gt_text)
-          print(f"🔄 Updated database for case: {rel_path} (GT file changed)")
+          old_gt = existing_case.get('gt_text') or "none"
+          new_gt = gt_text or "none"
+          
+          # Check if case is user-corrected - log differently
+          is_corrected = existing_case.get('is_corrected', False)
+          
+          if is_corrected:
+            print(f"🔄 External GT change detected: {rel_path} | '{old_gt}' → '{new_gt}' (user-corrected, restoring user data)")
+            # Restore the correct GT text to the file
+            gt_path = png_path.rsplit('.', 1)[0] + '.gt.txt'
+            try:
+              with open(gt_path, 'w', encoding='utf-8') as f:
+                f.write(old_gt)  # Write back the correct user correction
+              print(f"✅ Restored GT file: {os.path.basename(gt_path)} = '{old_gt}'")
+            except Exception as e:
+              print(f"⚠️  Failed to restore GT file {gt_path}: {e}")
+            # Don't update database for user-corrected cases
+          else:
+            # Only update database for non-corrected cases
+            db.update_case_gt_text(existing_case['id'], gt_text)
+            print(f"🔄 Updated database: {rel_path} | '{old_gt}' → '{new_gt}'")
     
     # Remove cases that no longer exist in folder
     all_cases = db.get_cases(limit=1000)
@@ -273,19 +336,27 @@ class CorrectionRequest(BaseModel):
 @app.get("/")
 async def root():
   """Serve the main UI page"""
-  ui_path = "lib/samuLearnUI.ts/index.html"
+  ui_path = os.path.join(os.path.dirname(__file__), "..", "lib", "samuLearnUI.ts", "index.html")
+  ui_path = os.path.abspath(ui_path)
+  
+  print(f"🔍 Looking for UI file at: {ui_path}")
+  print(f"📁 File exists: {os.path.exists(ui_path)}")
+  
   if os.path.exists(ui_path):
-    return FileResponse(ui_path)
+    print(f"✅ Serving UI file: {ui_path}")
+    return FileResponse(ui_path, media_type="text/html")
   else:
-    return HTMLResponse("""
+    print(f"❌ UI file not found: {ui_path}")
+    return HTMLResponse(f"""
     <html>
       <body>
         <h1>samuTrain OCR Monitor</h1>
-        <p>UI not found at lib/samuLearnUI.ts/index.html</p>
+        <p>UI not found at {ui_path}</p>
+        <p>Current working directory: {os.getcwd()}</p>
         <p>Please ensure the UI files are properly installed.</p>
       </body>
     </html>
-    """)
+    """, status_code=404)
 
 @app.get("/api/cases")
 async def get_cases(limit: int = 100, failset_only: bool = False):

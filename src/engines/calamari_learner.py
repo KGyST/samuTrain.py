@@ -40,3 +40,6 @@ class CalamariLearner(LearnerInterface):
 
   def is_available(self) -> bool:
     return os.path.exists(self.model_path)
+    
+  def get_name(self) -> str:
+    return "Calamari OCR"
