@@ -11,6 +11,7 @@ import threading
 import time
 import argparse
 import json
+import shutil
 from datetime import datetime
 
 # Add src to path for imports
@@ -45,8 +46,10 @@ import threading
 import time
 from pathlib import Path
 
-# Learning progress counter
+# Learning progress counter and auto-training trigger
 learning_step_counter = 0
+last_training_time = 0
+TRAINING_INTERVAL = 30  # seconds between automatic training attempts
 
 def sync_database_with_folder():
   """Synchronize database with actual data folder contents"""
@@ -60,19 +63,17 @@ def sync_database_with_folder():
     if learning_step_counter % 5 == 1:
       print(f"🔄 Learning Step #{learning_step_counter} - Scanning {DATA_FOLDER}")
     
-    # Get all PNG files in data folder
-    png_files = []
-    for root, dirs, files in os.walk(DATA_FOLDER):
-      for file in files:
-        if file.endswith('.png'):
-          png_files.append(os.path.join(root, file))
-    
+    # Get all image files in data folder (excluding temp directories)
     current_files = set()
-    
-    for png_path in png_files:
-      rel_path = os.path.relpath(png_path, DATA_FOLDER)  # Relative to DATA_FOLDER
-      current_files.add(rel_path)
+    for ext in ['*.png', '*.jpg', '*.jpeg', '*.bin.png']:
+      for file_path in Path(DATA_FOLDER).rglob(ext):
+        # Skip temp directories
+        if 'temp_failset' in str(file_path):
+          continue
+        rel_path = os.path.relpath(file_path, DATA_FOLDER)
+        current_files.add(rel_path)
       
+    for png_path in current_files:
       # Look for corresponding .gt.txt file
       gt_path = png_path.replace('.bin.png', '.gt.txt')
       gt_text = None
@@ -236,8 +237,77 @@ def sync_database_with_folder():
         if db.delete_case_by_img_path(case['img_path']):
           print(f"🗑️  Removed case: {case['img_path']}")
     
+    # AUTO-TRAINING: Check if we have failset cases and should trigger training
+    global last_training_time
+    current_time = time.time()
+    time_since_last_training = current_time - last_training_time
+    
+    # Get failset cases
+    failset_cases = db.get_cases(limit=1000, failset_only=True)
+    
+    if failset_cases and len(failset_cases) > 0 and time_since_last_training > TRAINING_INTERVAL:
+      print(f"🚀 Auto-training triggered: {len(failset_cases)} failset cases found, {int(time_since_last_training)}s since last training")
+      
+      # Trigger automatic training
+      try:
+        # Create temporary directory for failset training data
+        failset_dir = os.path.join(DATA_FOLDER, "temp_failset")
+        os.makedirs(failset_dir, exist_ok=True)
+        
+        # Copy failset images and GT files to temp directory
+        trained_count = 0
+        for case in failset_cases:
+          img_path = case['img_path']
+          gt_text = case['gt_text']
+          
+          # Skip if no GT text
+          if not gt_text:
+            continue
+            
+          # Get absolute paths - normalize path separators properly
+          img_path_normalized = img_path.replace('\\', '/')
+          if img_path_normalized.startswith('data/'):
+            src_img = img_path_normalized
+          else:
+            src_img = os.path.join(DATA_FOLDER, img_path_normalized)
+          
+          dst_img = os.path.join(failset_dir, os.path.basename(src_img))
+          
+          # Normalize both paths for comparison
+          src_img = os.path.normpath(src_img)
+          dst_img = os.path.normpath(dst_img)
+          
+          # Copy image file
+          if os.path.exists(src_img):
+            shutil.copy2(src_img, dst_img)
+            
+            # Create GT file
+            gt_filename = os.path.basename(src_img).replace('.bin.png', '.gt.txt')
+            gt_path = os.path.join(failset_dir, gt_filename)
+            
+            with open(gt_path, 'w', encoding='utf-8') as f:
+              f.write(gt_text)
+            
+            trained_count += 1
+        
+        if trained_count > 0:
+          print(f"🚀 Starting auto-training on {trained_count} failset cases...")
+          
+          # Trigger training
+          ocr_bridge.train_on_failset(failset_dir)
+          
+          # Update last training time
+          last_training_time = current_time
+          print(f"✅ Auto-training completed, next check in {TRAINING_INTERVAL}s")
+        
+        # Clean up temp directory
+        shutil.rmtree(failset_dir, ignore_errors=True)
+        
+      except Exception as e:
+        print(f"⚠️ Auto-training error: {e}")
+    
   except Exception as e:
-    print(f"⚠️  Sync error: {e}")
+    print(f"⚠️ Sync error: {e}")
 
 def folder_polling_worker():
   """Background thread that polls data folder for changes"""
@@ -478,6 +548,9 @@ async def initialize_from_data_folder():
     
     cases_created = 0
     data_folder = DATA_FOLDER
+
+    print ("DATA_FOLDER")
+    print (DATA_FOLDER)
     
     # Find all .png files in data folder
     png_files = glob.glob(os.path.join(data_folder, "**/*.png"), recursive=True)
@@ -533,6 +606,81 @@ async def reset_database():
 async def health_check():
   """Health check endpoint"""
   return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.post("/api/train")
+async def train_on_failset():
+  """Trigger training on failset cases"""
+  try:
+    import glob
+    
+    # Get failset cases from database
+    failset_cases = db.get_cases(limit=1000, failset_only=True)
+    
+    if not failset_cases:
+      return {"success": False, "message": "No failset cases found for training"}
+    
+    # Create temporary directory for failset training data
+    failset_dir = os.path.join(DATA_FOLDER, "temp_failset")
+    os.makedirs(failset_dir, exist_ok=True)
+    
+    # Copy failset images and GT files to temp directory
+    trained_count = 0
+    for case in failset_cases:
+      img_path = case['img_path']
+      gt_text = case['gt_text']
+      
+      print(f"Processing case: img_path='{img_path}', gt_text='{gt_text}'")
+      
+      # Skip temp directories and ensure we have GT text
+      img_path_normalized_for_filter = img_path.replace('\\', '/')
+      has_temp = 'temp_failset' in img_path_normalized_for_filter
+      print(f"Filter check: normalized='{img_path_normalized_for_filter}', has_temp={has_temp}, has_gt={bool(gt_text)}")
+      
+      if not gt_text or has_temp:
+        print(f"Skipping case: no_gt={not gt_text}, has_temp={has_temp}")
+        continue
+        
+      # Get absolute paths - normalize path separators
+      img_path_normalized = img_path.replace('\\', '/')
+      if img_path_normalized.startswith('data/'):
+        src_img = img_path_normalized
+      else:
+        src_img = os.path.join(DATA_FOLDER, img_path_normalized).replace('\\', '/')
+      
+      dst_img = os.path.join(failset_dir, os.path.basename(src_img)).replace('\\', '/')
+      
+      print(f"File paths: src_img='{src_img}', dst_img='{dst_img}'")
+      print(f"Source exists: {os.path.exists(src_img)}")
+      
+      # Copy image file
+      if os.path.exists(src_img):
+        shutil.copy2(src_img, dst_img)
+        
+        # Create GT file
+        gt_filename = os.path.basename(src_img).replace('.bin.png', '.gt.txt')
+        gt_path = os.path.join(failset_dir, gt_filename)
+        
+        with open(gt_path, 'w', encoding='utf-8') as f:
+          f.write(gt_text)
+        
+        trained_count += 1
+    
+    if trained_count == 0:
+      return {"success": False, "message": "No valid failset cases with GT text found"}
+    
+    print(f"🚀 Starting training on {trained_count} failset cases...")
+    
+    # Trigger training
+    ocr_bridge.train_on_failset(failset_dir)
+    
+    # Clean up temp directory
+    shutil.rmtree(failset_dir, ignore_errors=True)
+    
+    return {"success": True, "message": f"Training completed on {trained_count} failset cases"}
+    
+  except Exception as e:
+    print(f"Training API error: {e}")
+    raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 
 if __name__ == "__main__":
   import uvicorn
