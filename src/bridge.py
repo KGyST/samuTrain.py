@@ -1,141 +1,111 @@
-"""
-Bridge between samuTrain V2 and OCR learners
-Handles OCR prediction with fallback learner
-"""
-
 import os
-from typing import Tuple, Optional, List
-from engines.learner_interface import LearnerInterface
+import shutil
+import subprocess
+import numpy as np
+from PIL import Image
+from typing import Tuple, List
 
+# TensorFlow némítás az importok előtt
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-class FallbackOCRLearner(LearnerInterface):
-    """
-    Simple fallback OCR learner that generates reasonable predictions
-    """
+try:
+  from calamari_ocr.ocr.predict.predictor import Predictor
+  from calamari_ocr.ocr.predict.params import PredictorParams
+  LIB_MODE = True
+except ImportError:
+  LIB_MODE = False
 
-    def predict(self, image_path: str) -> Tuple[str, float]:
-        """Generate mock OCR prediction based on common patterns"""
-        import random
+class CalamariLearner:
+  def __init__(self, model_path: str):
+    self.model_path = model_path
+    self.predictor = None
+    
+    if LIB_MODE:
+      try:
+        # A benchmark kódod alapján: PredictorParams silent módban
+        params = PredictorParams(silent=True)
+        # A checkpoint elérési útja (kiterjesztés nélkül a biztosabb)
+        checkpoint_base = self.model_path.replace('.json', '')
+        
+        self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base)
+        print("✅ Calamari betöltve a memóriába (Instant OCR)")
+      except Exception as e:
+        print(f"⚠️ Memória betöltés hiba: {e}")
 
-        # Generate predictions similar to the training data patterns
-        patterns = [
-            f"{random.randint(10, 99)}.",      # Two digits with dot (e.g., "42.")
-            f"{random.randint(100, 999)}",     # Three digits (e.g., "123")
-            f"{random.randint(1, 9)}.",        # Single digit with dot (e.g., "5.")
-            f"{random.randint(10, 99)}",       # Two digits (e.g., "42")
-            f"{random.randint(1000, 9999)}",   # Four digits (e.g., "1234")
-        ]
+  def do_predict(self, image_path: str) -> Tuple[str, float]:
+    if self.predictor:
+      try:
+        with Image.open(image_path) as img:
+          data = np.array(img.convert('L')).astype(np.uint8)
 
-        prediction = random.choice(patterns)
-        confidence = random.uniform(0.3, 0.8)  # Realistic confidence range
+        # A predict_raw egy generátort ad vissza Sample objektumokkal
+        for res in self.predictor.predict_raw([data]):
+          # Calamari 2.2-nél a Sample-ben van egy 'prediction' attribútum, 
+          # DE ha az nincs ott közvetlenül, akkor a 'outputs'-ban keressük.
+          # A legvalószínűbb elérés a res.prediction (ha nem Sample, hanem Prediction)
+          # vagy res.outputs[0].prediction
+          
+          pred_obj = getattr(res, 'prediction', None)
+          if pred_obj is None and hasattr(res, 'outputs'):
+             pred_obj = res.outputs # Néha közvetlenül az output az
+          
+          # Ha a res maga a Prediction objektum (régebbi API)
+          if hasattr(res, 'sentence'):
+            pred_obj = res
+            
+          if pred_obj:
+            text = pred_obj.sentence.replace('\u202a', '').replace('\u202c', '').strip()
+            return text, getattr(pred_obj, 'avg_conf', 0.8)
+            
+        print("⚠️ Nem érkezett predikció a generátorból.")
+      except Exception as e:
+        print(f"⚠️ Predictor hiba (In-Memory): {e}")
+        import traceback
+        traceback.print_exc() # Ez kiírja, pontosan mi van a 'Sample'-ben
 
-        return prediction, confidence
+    return self._predict_cli(image_path)
 
-    def is_available(self) -> bool:
-        return True
+  def _predict_cli(self, image_path: str) -> Tuple[str, float]:
+    import json
+    abs_img = os.path.abspath(image_path)
+    img_dir = os.path.dirname(abs_img)
+    base_name = os.path.basename(abs_img).split('.')[0]
+    json_path = os.path.join(img_dir, f"{base_name}.json")
+    
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exe = os.path.join(base_dir, "venv_310", "Scripts", "calamari-predict.exe")
+    
+    cmd = [exe, "--checkpoint", self.model_path, "--data.images", abs_img, "--extended_prediction_data", "True"]
+    subprocess.run(cmd, capture_output=True, shell=True, cwd=img_dir)
 
-    def get_name(self) -> str:
-        return "Fallback OCR Learner"
-
+    if os.path.exists(json_path):
+      with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+      os.remove(json_path)
+      pred = data['predictions'][0]
+      return pred.get('sentence', "").strip(), pred.get('avg_char_probability', 0.8)
+    
+    return "FAIL", 0.0
 
 class OCRBridge:
-    """
-    Bridge class that manages OCR operations
-    """
+  def __init__(self):
+    model_name = os.environ.get('SAMUTRAIN_MODEL_NAME', 'new_model')
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    self.model_dir = os.path.join(base_dir, "models", model_name)
+    # A Calamari 2.2-nél a .json a belépési pont
+    self.model_path = os.path.join(self.model_dir, "best.ckpt.json")
+    
+    if not os.path.exists(self.model_dir):
+      src = os.path.join(base_dir, "models", "generic_latin")
+      if os.path.exists(src):
+        shutil.copytree(src, self.model_dir)
+      else:
+        os.makedirs(self.model_dir, exist_ok=True)
 
-    def __init__(self, model_path: Optional[str] = None):
-        """
-        Initialize OCR bridge with fallback learner
-        """
-        self.model_path = model_path or "models/generic_latin/best.ckpt"
-        self.learner: LearnerInterface = FallbackOCRLearner()
-        print(f"✅ Initialized {self.learner.get_name()}")
-    
-    def predict(self, image_path: str, gt_text: str = "") -> Tuple[str, float]:
-        """
-        Run OCR prediction on an image
-        
-        Args:
-            image_path: Path to the image file
-            gt_text: Ground truth text for fallback
-            
-        Returns:
-            Tuple of (predicted_text, confidence_score)
-        """
-        if self.learner:
-            try:
-                return self.learner.predict(image_path)
-            except Exception as e:
-                print(f"⚠️  OCR prediction failed: {e}")
-                return self._get_fallback_prediction(gt_text)
-        else:
-            return self._get_fallback_prediction(gt_text)
-    
-    def _get_fallback_prediction(self, gt_text: str = "") -> Tuple[str, float]:
-        """Get fallback prediction when OCR is not available"""
-        import random
-        
-        if gt_text:
-            # Simulate learning by slightly modifying GT text
-            if random.random() < 0.8:  # 80% chance of correct prediction
-                return gt_text, random.uniform(0.7, 0.95)
-            else:  # 20% chance of error
-                # Add small error to simulate OCR mistakes
-                chars = list(gt_text)
-                if chars and random.random() < 0.5:
-                    # Remove or change last character
-                    chars[-1] = random.choice(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.'])
-                return ''.join(chars), random.uniform(0.3, 0.7)
-        else:
-            # Generate reasonable OCR-like guess for bootstrapping unknown cases
-            # Based on common OCR patterns seen in the training data
-            patterns = [
-                f"{random.randint(10, 99)}.",      # Two digits with dot (e.g., "42.")
-                f"{random.randint(100, 999)}",     # Three digits (e.g., "123")
-                f"{random.randint(1, 9)}.",        # Single digit with dot (e.g., "5.")
-                f"{random.randint(10, 99)}",       # Two digits (e.g., "42")
-            ]
-            guess = random.choice(patterns)
-            confidence = random.uniform(0.2, 0.6)  # Lower confidence for guesses
-            return guess, confidence
-    
-    def train_on_cases(self, image_paths: List[str], gt_texts: List[str]) -> bool:
-        """
-        Train the model on new cases
-        
-        Args:
-            image_paths: List of image file paths
-            gt_texts: List of corresponding ground truth texts
-            
-        Returns:
-            True if training was successful, False otherwise
-        """
-        if not self.learner:
-            print("⚠️  No learner available for training")
-            return False
-        
-        try:
-            # TODO: Implement actual Calamari training
-            # For now, just log that training would happen
-            print(f"🎓 Training on {len(image_paths)} new cases...")
-            print(f"📝 GT texts: {gt_texts}")
-            print("⏳ Training simulation complete (real training to be implemented)")
-            return True
-        except Exception as e:
-            print(f"❌ Training failed: {e}")
-            return False
-    
-    def get_learner_info(self) -> dict:
-        """Get information about the current learner"""
-        if self.learner:
-            return {
-                "name": self.learner.get_name(),
-                "available": self.learner.is_available(),
-                "model_path": self.model_path
-            }
-        else:
-            return {
-                "name": "Fallback",
-                "available": True,
-                "model_path": None
-            }
+    self.learner = CalamariLearner(self.model_path)
+
+  def predict(self, image_path: str, *args, **kwargs) -> Tuple[str, float]:
+    return self.learner.do_predict(image_path)
+
+  def get_learner_info(self) -> dict:
+    return {"method": "memory" if self.learner.predictor else "cli", "ready": True}

@@ -1,50 +1,30 @@
 #!/usr/bin/env python3
-"""
-samuTrain V2 Server Launcher
-Run this script to start the samuTrain OCR monitoring server
-"""
-
 import os
 import sys
 import argparse
 
-# Add src/ and project root to sys.path for proper module imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
-src_dir = os.path.join(project_root, 'src')
-sys.path.insert(0, src_dir)
+sys.path.insert(0, os.path.join(project_root, 'src'))
 sys.path.insert(0, project_root)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Start samuTrain V2 Server")
-    parser.add_argument("--data-folder", default="data",
-                       help="Path to data folder (default: data)")
-    parser.add_argument("--reset-db", action="store_true",
-                       help="Reset database on startup")
-    
-    args = parser.parse_args()
-    
-    # Set data folder as environment variable for other modules
-    os.environ['SAMUTRAIN_DATA_FOLDER'] = args.data_folder
-    
-    from main import app
-    import uvicorn
-    
-    if args.reset_db:
-        print("🔄 Resetting database...")
-        from src.db import db
-        success = db.reset_database()
-        if not success:
-            print("❌ Database reset failed")
-            exit(1)
-        print("� Database reset enabled")
-    
-    print("🔄🚀 Starting samuTrain V2 Server...")
-    print(f"📁 Data folder: {args.data_folder}")
-    if args.reset_db:
-        print("🔄 Database reset enabled")
-    print("📊 UI will be available at: http://127.0.0.1:8000")
-    print("📚 API docs at: http://127.0.0.1:8000/docs")
-    print("⏹️  Press Ctrl+C to stop the server")
-    
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+  parser = argparse.ArgumentParser(description="samuTrain V2 Server")
+  parser.add_argument("--data-folder", default="data", help="Path to data")
+  parser.add_argument("--reset-db", action="store_true", help="Reset DB")
+  parser.add_argument("--model-folder", default="generic_latin", help="Model subfolder")
+  
+  args = parser.parse_args()
+  
+  os.environ['SAMUTRAIN_DATA_FOLDER'] = args.data_folder
+  os.environ['SAMUTRAIN_MODEL_NAME'] = args.model_folder
+  
+  from main import app
+  import uvicorn
+  from src.db import db
+  
+  if args.reset_db:
+    db.reset_database()
+  
+  print(f"🚀 Starting with model: {args.model_folder}")
+  uvicorn.run(app, host="127.0.0.1", port=8000)
