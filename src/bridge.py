@@ -55,10 +55,10 @@ class CalamariLearner:
         # Try loading as SavedModel first
         if os.path.isdir(checkpoint_base) and os.path.exists(os.path.join(checkpoint_base, 'saved_model.pb')):
           print("🔄 Loading as TensorFlow SavedModel...")
-          self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base, auto_update_checkpoints=False)
+          self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base, auto_update_checkpoints=True)
         else:
           print("🔄 Loading as checkpoint...")
-          self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base, auto_update_checkpoints=False)
+          self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base, auto_update_checkpoints=True)
         
         print("✅ Calamari betöltve a memóriába (Instant OCR)")
       except Exception as e:
@@ -264,7 +264,7 @@ class OCRBridge:
       # Clear existing predictor to force reload
       self.learner.predictor = None
       
-      # Reload predictor with updated model - recreate the entire learner
+      # Reload predictor with updated model - recreate entire learner
       try:
         from calamari_ocr.ocr.predict.params import PredictorParams
         predictor_params = PredictorParams(silent=True)
@@ -273,9 +273,15 @@ class OCRBridge:
         print(f"🔄 Recreating CalamariLearner with new model: {checkpoint_base}")
         
         # Recreate the entire learner to ensure clean state
-        self.learner = CalamariLearner(self.model_path)
+        new_learner = CalamariLearner(self.model_path)
         
-        print("✅ Predictor reloaded successfully with forced model update")
+        # Verify the new learner actually loaded successfully
+        if new_learner.predictor is not None:
+          self.learner = new_learner
+          print("✅ Predictor reloaded successfully with forced model update")
+        else:
+          print("⚠️ Predictor reload failed - predictor is None")
+        
       except Exception as reload_error:
         print(f"⚠️ Failed to reload predictor: {reload_error}")
         print(f"🔍 Predictor reload debug - checkpoint_base: {checkpoint_base}")
