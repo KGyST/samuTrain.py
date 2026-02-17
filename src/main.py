@@ -125,84 +125,41 @@ def sync_database_with_folder():
         
         # But skip updating ocr_text/confidence for user-corrected cases to preserve corrections
         if not existing_case.get('is_corrected', False):
-          # Check if case has ground truth in database
-          case_has_gt = existing_case.get('gt_text') is not None and existing_case.get('gt_text').strip() != ''
-          
-          if not case_has_gt:
-            # Case has no GT - bootstrap by writing OCR result to .txt file as initial GT
-            gt_path = png_path.rsplit('.', 1)[0] + '.gt.txt'
-            try:
-              # Check if GT file already exists and has content (preserve user corrections)
-              existing_gt_content = None
-              if os.path.exists(gt_path):
-                with open(gt_path, 'r', encoding='utf-8') as f:
-                  existing_gt_content = f.read().strip()
-                
-                # If GT file has non-empty content, preserve it (likely user correction)
-                if existing_gt_content:
-                  print(f"⏭️  Preserving existing GT file content: {os.path.basename(gt_path)} = '{existing_gt_content}'")
-                  # Update database with existing content
-                  db.update_case_gt_text(existing_case['id'], existing_gt_content)
-                  gt_text = existing_gt_content
-                  has_gt = True
-                  continue  # Skip to next case
-              
-              # Check if case is user-corrected (shouldn't overwrite user corrections)
-              is_corrected = existing_case.get('is_corrected', False)
-              
-              if is_corrected:
-                print(f"⏭️  Skipping bootstrap for {os.path.basename(gt_path)} - case is user-corrected")
-              else:
-                with open(gt_path, 'w', encoding='utf-8') as f:
-                  f.write(ocr_text)
-                
-                old_display = f"'{existing_gt_content}'" if existing_gt_content else "none"
-                print(f"✏️  Bootstrapped GT file: {os.path.basename(gt_path)} | {old_display} → '{ocr_text}'")
-                
-                # Update database with GT text
-                db.update_case_gt_text(existing_case['id'], ocr_text)
-                # Update OCR result and confidence
-                db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
-                
-                # Now treat as having GT for learning
-                gt_text = ocr_text
-                has_gt = True
-            except Exception as e:
-              print(f"⚠️  Failed to bootstrap GT file {gt_path}: {e}")
-          else:
-            # Case has GT - update OCR result only
-            db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
+          # Update OCR result and confidence for all cases
+          db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
         else:
           # For corrected cases, use the stored OCR result for logging
           ocr_text = existing_case.get('ocr_text', '')
           confidence = existing_case.get('confidence', 0.8)
         
-        # Log learning progress for existing cases (even if no changes)
-        if has_gt:
-          ocr_result = ocr_text
-          gt_result = gt_text
-          was_failset = existing_case.get('is_failset', False)
-          
-          # Determine if test passes (OCR matches GT)
-          test_passes = (ocr_result == gt_result)
-          
-          # Apply 4-case learning logic
-          if not was_failset and test_passes:
-            # Case 1: Trainset → Trainset (was in trainset, test OK, stays in trainset)
-            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (TRAINSET→TRAINSET)")
-          elif not was_failset and not test_passes:
-            # Case 2: Trainset → Failset (was in trainset, test fails, goes to failset)
-            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET→FAILSET")
-            # Update database to move to failset
-            db.update_case_failset_status(existing_case['id'], True)
-          elif was_failset and test_passes:
-            # Case 3: Failset → Trainset (was in failset, test OK, goes to trainset)
-            print(f"✅ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→TRAINSET")
-            # Update database to move back to trainset
-            db.update_case_failset_status(existing_case['id'], False)
-          elif was_failset and not test_passes:
-            # Case 4: Failset → Failset (was in failset, test fails, stays in failset)
-            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→FAILSET")
+        # Log OCR results even for cases without GT
+        if not has_gt:
+            print(f"📊 {os.path.basename(rel_path)}: OCR='{ocr_text}', confidence={confidence:.3f} (no GT)")
+        elif has_gt:
+            ocr_result = ocr_text
+            gt_result = gt_text
+            was_failset = existing_case.get('is_failset', False)
+            
+            # Determine if test passes (OCR matches GT)
+            test_passes = (ocr_result == gt_result)
+            
+            # Apply 4-case learning logic
+            if not was_failset and test_passes:
+                # Case 1: Trainset → Trainset (was in trainset, test OK, stays in trainset)
+                print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (TRAINSET→TRAINSET)")
+            elif not was_failset and not test_passes:
+                # Case 2: Trainset → Failset (was in trainset, test fails, goes to failset)
+                print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET→FAILSET")
+                # Update database to move to failset
+                db.update_case_failset_status(existing_case['id'], True)
+            elif was_failset and test_passes:
+                # Case 3: Failset → Trainset (was in failset, test OK, goes to trainset)
+                print(f"✅ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→TRAINSET")
+                # Update database to move back to trainset
+                db.update_case_failset_status(existing_case['id'], False)
+            elif was_failset and not test_passes:
+                # Case 4: Failset → Failset (was in failset, test fails, stays in failset)
+                print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→FAILSET")
         
         # Update database if GT file changed (but NEVER write back to GT files)
         if gt_text != existing_case.get('gt_text'):

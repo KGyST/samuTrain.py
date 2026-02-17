@@ -6,6 +6,9 @@ Handles OCR prediction with fallback learner
 import os
 from typing import Tuple, Optional, List
 from engines.learner_interface import LearnerInterface
+from calamari_ocr.ocr.predict.predictor import Predictor
+from calamari_ocr.ocr.training.trainer import Trainer
+from calamari_ocr.ocr.training.params import TrainerParams
 
 
 class FallbackOCRLearner(LearnerInterface):
@@ -45,11 +48,17 @@ class OCRBridge:
 
     def __init__(self, model_path: Optional[str] = None):
         """
-        Initialize OCR bridge with fallback learner
+        Initialize OCR bridge with Calamari predictor
         """
-        self.model_path = model_path or "models/generic_latin/best.ckpt"
-        self.learner: LearnerInterface = FallbackOCRLearner()
-        print(f"✅ Initialized {self.learner.get_name()}")
+        self.model_path = model_path or "models/generic_latin/best.ckpt.json"
+        self.predictor = None
+        try:
+            self.predictor = Predictor.from_checkpoint(self.model_path)
+            print("✅ Initialized Calamari OCR predictor")
+        except Exception as e:
+            print(f"⚠️  Failed to initialize Calamari predictor: {e}")
+            print("Using fallback learner")
+            self.predictor = FallbackOCRLearner()
     
     def predict(self, image_path: str, gt_text: str = "") -> Tuple[str, float]:
         """
@@ -62,14 +71,16 @@ class OCRBridge:
         Returns:
             Tuple of (predicted_text, confidence_score)
         """
-        if self.learner:
+        if isinstance(self.predictor, Predictor):
             try:
-                return self.learner.predict(image_path)
+                predictions = self.predictor.predict([image_path])
+                pred = predictions[0]
+                return pred.text, pred.confidence
             except Exception as e:
                 print(f"⚠️  OCR prediction failed: {e}")
                 return self._get_fallback_prediction(gt_text)
         else:
-            return self._get_fallback_prediction(gt_text)
+            return self.predictor.predict(image_path)
     
     def _get_fallback_prediction(self, gt_text: str = "") -> Tuple[str, float]:
         """Get fallback prediction when OCR is not available"""
@@ -110,16 +121,26 @@ class OCRBridge:
         Returns:
             True if training was successful, False otherwise
         """
-        if not self.learner:
-            print("⚠️  No learner available for training")
+        if not isinstance(self.predictor, Predictor):
+            print("⚠️  No Calamari predictor available for training")
             return False
         
         try:
-            # TODO: Implement actual Calamari training
-            # For now, just log that training would happen
             print(f"🎓 Training on {len(image_paths)} new cases...")
-            print(f"📝 GT texts: {gt_texts}")
-            print("⏳ Training simulation complete (real training to be implemented)")
+            
+            params = TrainerParams()
+            params.warmstart = self.model_path
+            params.output_dir = os.path.dirname(self.model_path)
+            params.dataset = [(img, gt) for img, gt in zip(image_paths, gt_texts)]
+            
+            trainer = Trainer(params)
+            trainer.train()
+            trainer.scenario.save_model(params.output_dir)
+            
+            # Reload the predictor with the updated model
+            self.predictor = Predictor.from_checkpoint(self.model_path)
+            
+            print("✅ Training complete, model updated")
             return True
         except Exception as e:
             print(f"❌ Training failed: {e}")
@@ -127,15 +148,15 @@ class OCRBridge:
     
     def get_learner_info(self) -> dict:
         """Get information about the current learner"""
-        if self.learner:
+        if isinstance(self.predictor, Predictor):
             return {
-                "name": self.learner.get_name(),
-                "available": self.learner.is_available(),
+                "name": "Calamari OCR",
+                "available": True,
                 "model_path": self.model_path
             }
         else:
             return {
-                "name": "Fallback",
-                "available": True,
+                "name": self.predictor.get_name(),
+                "available": self.predictor.is_available(),
                 "model_path": None
             }
