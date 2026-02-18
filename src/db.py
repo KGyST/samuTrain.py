@@ -77,6 +77,10 @@ class Database:
       row = cursor.fetchone()
       return dict(row) if row else None
 
+  def get_case(self, case_id: int) -> Optional[Dict[str, Any]]:
+    """Alias for get_case_by_id for backward compatibility"""
+    return self.get_case_by_id(case_id)
+
   def delete_case_by_img_path(self, img_path: str) -> bool:
     """Delete case by image path"""
     with sqlite3.connect(self.db_path) as conn:
@@ -268,6 +272,9 @@ def get_cases(limit: int = 100, failset_only: bool = False):
 
 def get_case_by_id(case_id: int):
     return db.get_case_by_id(case_id)
+
+def get_case(case_id: int):
+    return db.get_case(case_id)
 
 def get_case_by_img_path(img_path: str):
     return db.get_case_by_img_path(img_path)

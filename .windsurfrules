@@ -5,6 +5,8 @@
 - Path Management: Always ensure src/ and project root are in sys.path.
 - Constraints: Use 2-space indentation, no end-of-line comments, keep code dense.
 - Current Status: 90% complete, moving to full web process with 64 test cases.
+- NEVER downgrade TensorFlow below 2.15.0.
+- Ignore "checkpoint version 2" errors by performing a training cycle to upgrade the model.
 
 # Project Rules
 
@@ -31,3 +33,4 @@
 ## Specific Fixes
 - **Calamari Version:** If `__version__` is missing from `calamari_ocr`, use the monkey-patch in `src/bridge.py` or manually edit `lib/calamari/calamari_ocr/__init__.py`.
 - **Static Assets:** The backend mounts `data/` to `/static`. Ensure the API returns `/static/filename.png` for UI compatibility.
+

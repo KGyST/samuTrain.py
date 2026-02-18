@@ -1,505 +1,151 @@
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 import os
 import sys
-import sqlite3
-import threading
+import shutil
 import time
-import argparse
-import json
-from datetime import datetime
+import glob
+import threading
 
-# Add src to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from db import Database
 from bridge import OCRBridge
 
-app = FastAPI(title="samuTrain OCR Monitor", version="2.0")
+app = FastAPI(title="samuTrain - AutoDiscovery Mode")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Get data folder from environment variable or default to "data"
 DATA_FOLDER = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
-
-# Initialize database
 db = Database()
-
-# Initialize OCR bridge
 ocr_bridge = OCRBridge()
-print(f"🔧 OCR Bridge Status: {ocr_bridge.get_learner_info()}")
 
-# Folder polling and synchronization
-import threading
-import time
-from pathlib import Path
-
-# Learning progress counter
-learning_step_counter = 0
-
-def sync_database_with_folder():
-  """Synchronize database with actual data folder contents"""
-  global learning_step_counter
-  learning_step_counter += 1
-  
-  try:
-    import glob
-    
-    # Only print learning steps every 5 cycles to reduce noise
-    if learning_step_counter % 5 == 1:
-      print(f"🔄 Learning Step #{learning_step_counter} - Scanning {DATA_FOLDER}")
-    
-    # Get all PNG files in data folder
-    png_files = []
-    for root, dirs, files in os.walk(DATA_FOLDER):
-      for file in files:
-        if file.endswith('.png'):
-          png_files.append(os.path.join(root, file))
-    
-    current_files = set()
-    
-    for png_path in png_files:
-      rel_path = os.path.relpath(png_path, DATA_FOLDER)  # Relative to DATA_FOLDER
-      current_files.add(rel_path)
-      
-      # Look for corresponding .gt.txt file
-      gt_path = png_path.replace('.bin.png', '.gt.txt')
-      gt_text = None
-      if os.path.exists(gt_path):
-        with open(gt_path, 'r', encoding='utf-8') as f:
-          gt_text = f.read().strip()
-      
-      # Debug: Log GT text status for sync
-      has_gt = gt_text and gt_text.strip()
-      
-      # Check if case exists
-      existing_case = db.get_case_by_img_path(rel_path)
-      
-      if not existing_case:
-        # Run real OCR prediction
-        full_image_path = os.path.abspath(png_path)  # Use absolute path directly
-        ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
-        
-        print(f"📊 {rel_path}: OCR='{ocr_text}', confidence={confidence:.3f}, has_gt={has_gt}")
-        case_id = db.insert_case(
-          img_path=rel_path,
-          ocr_text=ocr_text,
-          confidence=confidence,
-          gt_text=gt_text,
-          is_failset=False
-        )
-        print(f"➕ Added new case: {rel_path}")
-        
-        # Log learning progress for new cases
-        if has_gt:
-          ocr_result = ocr_text
-          gt_result = gt_text
-          test_passes = (ocr_result == gt_result)
-          
-          if test_passes:
-            print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (NEW→TRAINSET)")
-          else:
-            print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' NEW→FAILSET")
-            # Update database to move to failset
-            db.update_case_failset_status(case_id, True)
-        
-      else:
-        # Run real OCR prediction for existing cases to check learning progress
-        # Always update model_prediction with latest OCR result
-        full_image_path = os.path.abspath(png_path)  # Use absolute path directly
-        ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
-        
-        # Always update the latest model prediction
-        db.update_model_prediction(existing_case['id'], ocr_text)
-        
-        # But skip updating ocr_text/confidence for user-corrected cases to preserve corrections
-        if not existing_case.get('is_corrected', False):
-          # Update OCR result and confidence for all cases
-          db.update_case_ocr_result(existing_case['id'], ocr_text, confidence)
-        else:
-          # For corrected cases, use the stored OCR result for logging
-          ocr_text = existing_case.get('ocr_text', '')
-          confidence = existing_case.get('confidence', 0.8)
-        
-        # Log OCR results even for cases without GT
-        if not has_gt:
-            print(f"📊 {os.path.basename(rel_path)}: OCR='{ocr_text}', confidence={confidence:.3f} (no GT)")
-        elif has_gt:
-            ocr_result = ocr_text
-            gt_result = gt_text
-            was_failset = existing_case.get('is_failset', False)
-            
-            # Determine if test passes (OCR matches GT)
-            test_passes = (ocr_result == gt_result)
-            
-            # Apply 4-case learning logic
-            if not was_failset and test_passes:
-                # Case 1: Trainset → Trainset (was in trainset, test OK, stays in trainset)
-                print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (TRAINSET→TRAINSET)")
-            elif not was_failset and not test_passes:
-                # Case 2: Trainset → Failset (was in trainset, test fails, goes to failset)
-                print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' TRAINSET→FAILSET")
-                # Update database to move to failset
-                db.update_case_failset_status(existing_case['id'], True)
-            elif was_failset and test_passes:
-                # Case 3: Failset → Trainset (was in failset, test OK, goes to trainset)
-                print(f"✅ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→TRAINSET")
-                # Update database to move back to trainset
-                db.update_case_failset_status(existing_case['id'], False)
-            elif was_failset and not test_passes:
-                # Case 4: Failset → Failset (was in failset, test fails, stays in failset)
-                print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' FAILSET→FAILSET")
-        
-        # Update database if GT file changed (but NEVER write back to GT files)
-        if gt_text != existing_case.get('gt_text'):
-          old_gt = existing_case.get('gt_text') or "none"
-          new_gt = gt_text or "none"
-          
-          # Check if case is user-corrected - log differently
-          is_corrected = existing_case.get('is_corrected', False)
-          
-          if is_corrected:
-            print(f"🔄 External GT change detected: {rel_path} | '{old_gt}' → '{new_gt}' (user-corrected, restoring user data)")
-            # Restore the correct GT text to the file
-            gt_path = png_path.rsplit('.', 1)[0] + '.gt.txt'
-            try:
-              with open(gt_path, 'w', encoding='utf-8') as f:
-                f.write(old_gt)  # Write back the correct user correction
-              print(f"✅ Restored GT file: {os.path.basename(gt_path)} = '{old_gt}'")
-            except Exception as e:
-              print(f"⚠️  Failed to restore GT file {gt_path}: {e}")
-            # Don't update database for user-corrected cases
-          else:
-            # Only update database for non-corrected cases
-            db.update_case_gt_text(existing_case['id'], gt_text)
-            print(f"🔄 Updated database: {rel_path} | '{old_gt}' → '{new_gt}'")
-    
-    # Remove cases that no longer exist in folder
-    all_cases = db.get_cases(limit=1000)
-    for case in all_cases:
-      if case['img_path'] not in current_files:
-        # Delete case from database
-        if db.delete_case_by_img_path(case['img_path']):
-          print(f"🗑️  Removed case: {case['img_path']}")
-    
-    # Train on failset cases to update model
-    if learning_step_counter % 5 == 0:
-      failset_cases = db.get_cases(limit=1000, failset_only=True)
-      if failset_cases:
-        print(f"🎓 Training on {len(failset_cases)} failset cases...")
-        image_paths = [os.path.join(DATA_FOLDER, case['img_path']) for case in failset_cases]
-        gt_texts = [case['gt_text'] for case in failset_cases]
-        ocr_bridge.train_on_failset(image_paths, gt_texts)
-    
-  except Exception as e:
-    print(f"⚠️  Sync error: {e}")
-
-def folder_polling_worker():
-  """Background thread that polls data folder for changes"""
+def discover_new_files():
+  """Background task to find new images and create cases"""
+  print(f"👀 Auto-Discovery started on: {DATA_FOLDER}")
   while True:
     try:
-      sync_database_with_folder()
-      time.sleep(2)  # Reduced from 5 seconds to 2 seconds for more frequent learning
+      # Keressük az összes bin.png-t
+      files = glob.glob(os.path.join(DATA_FOLDER, "*.bin.png"))
+      
+      # Lekérjük a már bent lévő fájlokat a DB-ből a felesleges körök elkerülésére
+      # Feltételezve, hogy a db.get_cases egy listát ad vissza
+      existing_cases = db.get_cases(limit=10000)
+      known_paths = {c['img_path'] for c in existing_cases}
+      
+      for img_path in files:
+        rel_path = os.path.basename(img_path)
+        
+        if rel_path not in known_paths:
+          print(f"✨ New case discovered: {rel_path}")
+          # Azonnali predikció az új fájlra (GT még nincs)
+          pred, conf = ocr_bridge.predict(img_path)
+          
+          # Megnézzük, van-e már hozzá véletlenül .gt.txt a mappában
+          gt_path = img_path.replace('.bin.png', '.gt.txt')
+          gt_text = None
+          if os.path.exists(gt_path):
+            with open(gt_path, 'r', encoding='utf-8') as f:
+              gt_text = f.read().strip()
+          
+          # Beszúrás az adatbázisba
+          db.insert_case(
+            img_path=rel_path,
+            ocr_text=pred,
+            confidence=conf,
+            gt_text=gt_text, # Ha nincs GT, None marad -> ez lesz a "FAILSET" jelölt
+            is_failset=False
+          )
+          known_paths.add(rel_path)
+          
     except Exception as e:
-      print(f"⚠️  Folder polling error: {e}")
-      time.sleep(5)
-
-# Start background polling thread
-polling_thread = threading.Thread(target=folder_polling_worker, daemon=True)
-polling_thread.start()
-
-# Auto-initialize database with data from folder on startup
-try:
-  import glob
-  cases_count = 0
-  
-  # Find all .png files in data folder
-  png_files = glob.glob(os.path.join(DATA_FOLDER, "**/*.png"), recursive=True)
-  
-  for png_path in png_files:
-    # Convert to relative path for storage
-    rel_path = os.path.relpath(png_path)
-    
-    # Check if case already exists
-    existing_case = db.get_case_by_img_path(rel_path)
-    if existing_case:
-      continue
-    
-    # Look for corresponding .gt.txt file
-    gt_path = png_path.replace('.bin.png', '.gt.txt')
-    gt_text = None
-    if os.path.exists(gt_path):
-      with open(gt_path, 'r', encoding='utf-8') as f:
-        gt_text = f.read().strip()
-    
-    # Debug: Log GT text status
-    has_gt = gt_text and gt_text.strip()
-    print(f"🔍 {rel_path}: GT exists={os.path.exists(gt_path)}, GT text='{gt_text}', has_content={has_gt}")
-    
-    # Create case with real OCR prediction
-    full_image_path = os.path.abspath(png_path)  # Use absolute path directly
-    ocr_text, confidence = ocr_bridge.predict(full_image_path, gt_text or "")
-    
-    print(f"📊 {rel_path}: OCR='{ocr_text}', confidence={confidence:.3f}")
-    
-    case_id = db.insert_case(
-      img_path=rel_path,
-      ocr_text=ocr_text,
-      confidence=confidence,
-      gt_text=gt_text,
-      is_failset=False,
-      model_prediction=ocr_text
-    )
-    cases_count += 1
-    
-    # Log learning progress for auto-initialization
-    if has_gt:
-      ocr_result = ocr_text
-      gt_result = gt_text
-      test_passes = (ocr_result == gt_result)
+      print(f"⚠️ Discovery error: {e}")
       
-      if test_passes:
-        print(f"🎯 {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' OK (AUTO→TRAINSET)")
-      else:
-        print(f"❌ {os.path.basename(rel_path)} guessed '{ocr_result}', was '{gt_result}' AUTO→FAILSET")
-        # Update database to move to failset
-        db.update_case_failset_status(case_id, True)
-  
-  if cases_count > 0:
-    print(f"📊 Auto-initialized {cases_count} cases from {DATA_FOLDER}")
-except Exception as e:
-  print(f"⚠️  Failed to auto-initialize database: {e}")
+    time.sleep(10) # 10 másodpercenként nézzük át a mappát
 
-# Mount static files for data directory
-parent_dir = os.path.dirname(DATA_FOLDER) if os.path.dirname(DATA_FOLDER) else "."
-if os.path.exists(parent_dir):
-  app.mount("/static", StaticFiles(directory=parent_dir), name="static")
-  print(f"📁 Static files mounted from: {parent_dir}")
-else:
-  print(f"⚠️  Parent directory not found: {parent_dir}")
-
-class CaseRequest(BaseModel):
-  image_path: str
-  ocr_text: str
-  confidence: float
-  gt_text: Optional[str] = None
-  is_failset: bool = False
-
-class CorrectionRequest(BaseModel):
-  corrected_text: str
-
-@app.get("/")
-async def root():
-  """Serve the main UI page"""
-  ui_path = os.path.join(os.path.dirname(__file__), "..", "lib", "samuLearnUI.ts", "index.html")
-  ui_path = os.path.abspath(ui_path)
-  
-  print(f"🔍 Looking for UI file at: {ui_path}")
-  print(f"📁 File exists: {os.path.exists(ui_path)}")
-  
-  if os.path.exists(ui_path):
-    print(f"✅ Serving UI file: {ui_path}")
-    return FileResponse(ui_path, media_type="text/html")
-  else:
-    print(f"❌ UI file not found: {ui_path}")
-    return HTMLResponse(f"""
-    <html>
-      <body>
-        <h1>samuTrain OCR Monitor</h1>
-        <p>UI not found at {ui_path}</p>
-        <p>Current working directory: {os.getcwd()}</p>
-        <p>Please ensure the UI files are properly installed.</p>
-      </body>
-    </html>
-    """, status_code=404)
-
-@app.get("/api/cases")
-async def get_cases(limit: int = 100, failset_only: bool = False):
-  """Get OCR cases with optional filtering"""
-  try:
-    cases = db.get_cases(limit=limit, failset_only=failset_only)
-    
-    # Convert datetime objects to ISO format for JSON serialization
-    for case in cases:
-      if isinstance(case['timestamp'], str):
-        # SQLite already returns string format, keep as is
-        pass
-      elif hasattr(case['timestamp'], 'isoformat'):
-        case['timestamp'] = case['timestamp'].isoformat()
-      
-      # Convert boolean fields to proper bool
-      case['is_corrected'] = bool(case['is_corrected'])
-      case['is_failset'] = bool(case['is_failset'])
-      
-      # Add image URL for frontend - include data folder for cache busting
-      img_path = case['img_path']
-      img_path_normalized = img_path.replace('\\', '/')  # Normalize path separators
-      
-      # Extract the data folder name from DATA_FOLDER for URL generation
-      data_folder_name = os.path.basename(DATA_FOLDER.rstrip('/\\'))
-      
-      # Find the relative path within the data folder
-      # The path should be data/folder/filename.png, so we need folder/filename.png
-      if f"{data_folder_name}/" in img_path_normalized:
-        # Extract everything after the folder name
-        rel_path = img_path_normalized.split(f"{data_folder_name}/", 1)[1]
-        case['image_path'] = f"/static/{data_folder_name}/{rel_path}"
-      else:
-        # Fallback - just use the filename with folder prefix
-        filename = os.path.basename(img_path_normalized)
-        case['image_path'] = f"/static/{data_folder_name}/{filename}"
-    
-    return cases
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@app.get("/api/debug")
-async def debug_cases():
-  """Debug endpoint to show case details"""
-  try:
-    cases = db.get_cases(limit=5)
-    debug_info = []
-    for case in cases:
-      debug_info.append({
-        'id': case['id'],
-        'img_path': case['img_path'],
-        'ocr_text': case['ocr_text'],
-        'gt_text': case['gt_text'],
-        'confidence': case['confidence'],
-        'gt_text_length': len(case['gt_text']) if case['gt_text'] else 0,
-        'gt_text_empty': not case['gt_text'] or not case['gt_text'].strip()
-      })
-    return {"debug_info": debug_info}
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
-
-@app.get("/api/version")
-async def get_version():
-  """Get API version to force cache refresh"""
-  return {"version": "1.0", "timestamp": datetime.now().isoformat()}
-
-@app.post("/api/cases")
-async def create_case(case_request: CaseRequest):
-  """Create a new OCR case"""
-  try:
-    case_id = db.insert_case(
-      img_path=case_request.image_path,
-      ocr_text=case_request.ocr_text,
-      confidence=case_request.confidence,
-      gt_text=case_request.gt_text,
-      is_failset=case_request.is_failset
-    )
-    
-    return {"success": True, "case_id": case_id, "message": "Case created successfully"}
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Failed to create case: {str(e)}")
-
-@app.post("/api/cases/{case_id}/correct")
-async def correct_case(case_id: int, correction: CorrectionRequest):
-  """Correct a case and update GT file"""
-  try:
-    print(f"=== CORRECTION API CALL ===")
-    print(f"Case ID: {case_id}")
-    print(f"Corrected text: '{correction.corrected_text}'")
-    
-    success = db.update_case_correction(case_id, correction.corrected_text)
-    
-    print(f"Database update result: {success}")
-    
-    if success:
-      return {"success": True, "message": "Case corrected successfully"}
-    else:
-      raise HTTPException(status_code=404, detail="Case not found or correction failed")
-  except HTTPException:
-    raise
-  except Exception as e:
-    print(f"Correction API error: {e}")
-    raise HTTPException(status_code=500, detail=f"Correction failed: {str(e)}")
+# Elindítjuk a figyelőt egy külön szálon
+discovery_thread = threading.Thread(target=discover_new_files, daemon=True)
+discovery_thread.start()
 
 @app.get("/api/statistics")
 async def get_statistics():
-  """Get system statistics"""
-  try:
-    stats = db.get_statistics()
-    return stats
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")
+  stats = db.get_statistics()
+  return stats if stats else {"total": 0, "failset": 0}
 
-@app.post("/api/initialize")
-async def initialize_from_data_folder():
-  """Scan data folder and populate database with existing cases"""
-  try:
-    import glob
-    
-    cases_created = 0
-    data_folder = DATA_FOLDER
-    
-    # Find all .png files in data folder
-    png_files = glob.glob(os.path.join(data_folder, "**/*.png"), recursive=True)
-    
-    for png_path in png_files:
-      # Convert to relative path for storage
-      rel_path = os.path.relpath(png_path)
-      
-      # Check if case already exists
-      existing_case = db.get_case_by_img_path(rel_path)
-      if existing_case:
-        continue
-      
-      # Look for corresponding .gt.txt file
-      gt_path = png_path.replace('.png', '.gt.txt')
-      gt_text = None
-      if os.path.exists(gt_path):
-        with open(gt_path, 'r', encoding='utf-8') as f:
-          gt_text = f.read().strip()
-      
-      # Create case with mock OCR data for now
-      # In a real scenario, you'd run OCR prediction here
-      case_id = db.insert_case(
-        img_path=rel_path,
-        ocr_text=gt_text or "OCR_RESULT_PLACEHOLDER",
-        confidence=0.95,
-        gt_text=gt_text,
-        is_failset=False
-      )
-      cases_created += 1
-    
-    return {"success": True, "cases_created": cases_created, "message": f"Initialized {cases_created} cases from data folder"}
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Failed to initialize: {str(e)}")
+@app.get("/api/cases")
+async def get_cases(limit: int = 100, failset_only: bool = False):
+  return db.get_cases(limit=limit, failset_only=failset_only)
 
-@app.post("/api/reset")
-async def reset_database():
-  """Reset database and re-initialize from data folder"""
+@app.post("/api/train")
+async def trigger_training(request: Request):
   try:
-    # Delete database file
-    if os.path.exists("samu.db"):
-      os.remove("samu.db")
+    data = await request.json()
+    case_ids = data.get('case_ids', [])
+    failset_dir = os.path.join(DATA_FOLDER, f"train_{int(time.time())}")
+    os.makedirs(failset_dir, exist_ok=True)
     
-    # Re-initialize database
-    db.init_database()
+    count = 0
+    for cid in case_ids:
+      case = db.get_case(cid)
+      if not case or not case.get('gt_text'): continue
+      src = os.path.join(DATA_FOLDER, case['img_path'])
+      dst = os.path.join(failset_dir, os.path.basename(src))
+      if os.path.exists(src):
+        shutil.copy2(src, dst)
+        with open(dst.replace('.bin.png', '.gt.txt'), 'w', encoding='utf-8') as f:
+          f.write(case['gt_text'])
+        count += 1
     
-    # Re-run initialization
-    return await initialize_from_data_folder()
+    if count > 0:
+      ocr_bridge.train_on_failset(failset_dir)
+    
+    shutil.rmtree(failset_dir, ignore_errors=True)
+    return {"success": True, "count": count}
   except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Failed to reset database: {str(e)}")
+    return {"success": False, "detail": str(e)}
 
-@app.get("/api/health")
-async def health_check():
-  """Health check endpoint"""
-  return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+@app.get("/api/status")
+async def get_status():
+  return {"bridge": ocr_bridge.get_learner_info(), "model": ocr_bridge.model_path}
+
+@app.post("/api/cases/{case_id}/correct")
+async def correct_case(case_id: int, request: Request):
+  try:
+    data = await request.json()
+    corrected_text = data.get('corrected_text', '')
+    
+    success = db.update_case_correction(case_id, corrected_text)
+    if success:
+      return {"success": True}
+    else:
+      return {"success": False, "detail": "Failed to save correction"}
+  except Exception as e:
+    return {"success": False, "detail": str(e)}
+
+# --- UI KISZOLGÁLÁS FIXÁLÁSA ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+if os.path.exists(STATIC_DIR):
+  # 1. A főoldal (http://127.0.0.1:8000/) kiszolgálása
+  @app.get("/", response_class=HTMLResponse)
+  async def read_index():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+  # 2. A statikus fájlok (JS, CSS) elérése (/static/main.js stb.)
+  app.mount("/static", StaticFiles(directory=DATA_FOLDER), name="static")
+
+  # 3. "Mentőöv" útvonal: ha a böngésző frissítéskor eltévedne
+  @app.get("/{full_path:path}")
+  async def catch_all(full_path: str):
+    if not full_path.startswith("api/"):
+      return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    raise HTTPException(status_code=404)
+else:
+  print(f"❌ HIBA: Nem találom a static mappát itt: {STATIC_DIR}")
+# ------------------------------
 
 if __name__ == "__main__":
   import uvicorn
-  uvicorn.run(app, host="127.0.0.1", port=8000)
+  # A discovery szál már fut a háttérben
+  uvicorn.run(app, host="0.0.0.0", port=8000)
