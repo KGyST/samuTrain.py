@@ -50,7 +50,8 @@ class OCRBridge:
         """
         Initialize OCR bridge with Calamari predictor
         """
-        self.model_path = model_path or "models/generic_latin/best.ckpt.json"
+        model_folder = os.environ.get('SAMUTRAIN_MODEL_FOLDER', 'models/generic_latin')
+        self.model_path = model_path or os.path.join(model_folder, 'best.ckpt.json')
         self.predictor = None
         try:
             self.predictor = Predictor.from_checkpoint(self.model_path)
@@ -110,7 +111,7 @@ class OCRBridge:
             confidence = random.uniform(0.2, 0.6)  # Lower confidence for guesses
             return guess, confidence
     
-    def train_on_cases(self, image_paths: List[str], gt_texts: List[str]) -> bool:
+    def train_on_failset(self, image_paths: List[str], gt_texts: List[str]) -> bool:
         """
         Train the model on new cases
         

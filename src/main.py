@@ -193,6 +193,15 @@ def sync_database_with_folder():
         if db.delete_case_by_img_path(case['img_path']):
           print(f"🗑️  Removed case: {case['img_path']}")
     
+    # Train on failset cases to update model
+    if learning_step_counter % 5 == 0:
+      failset_cases = db.get_cases(limit=1000, failset_only=True)
+      if failset_cases:
+        print(f"🎓 Training on {len(failset_cases)} failset cases...")
+        image_paths = [os.path.join(DATA_FOLDER, case['img_path']) for case in failset_cases]
+        gt_texts = [case['gt_text'] for case in failset_cases]
+        ocr_bridge.train_on_failset(image_paths, gt_texts)
+    
   except Exception as e:
     print(f"⚠️  Sync error: {e}")
 

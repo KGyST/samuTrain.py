@@ -19,6 +19,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Start samuTrain V2 Server")
     parser.add_argument("--data-folder", default="data",
                        help="Path to data folder (default: data)")
+    parser.add_argument("--model-folder", default="models/generic_latin",
+                       help="Path to model folder (default: models/generic_latin)")
     parser.add_argument("--reset-db", action="store_true",
                        help="Reset database on startup")
     
@@ -26,6 +28,7 @@ if __name__ == "__main__":
     
     # Set data folder as environment variable for other modules
     os.environ['SAMUTRAIN_DATA_FOLDER'] = args.data_folder
+    os.environ['SAMUTRAIN_MODEL_FOLDER'] = args.model_folder
     
     from main import app
     import uvicorn
@@ -41,6 +44,7 @@ if __name__ == "__main__":
     
     print("🔄🚀 Starting samuTrain V2 Server...")
     print(f"📁 Data folder: {args.data_folder}")
+    print(f"📁 Model folder: {args.model_folder}")
     if args.reset_db:
         print("🔄 Database reset enabled")
     print("📊 UI will be available at: http://127.0.0.1:8000")
