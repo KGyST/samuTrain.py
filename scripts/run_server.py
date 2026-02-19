@@ -17,10 +17,10 @@ sys.path.insert(0, project_root)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Start samuTrain V2 Server")
-    parser.add_argument("--data-folder", default="data",
-                       help="Path to data folder (default: data)")
-    parser.add_argument("--model-folder", default="models/generic_latin",
-                       help="Path to model folder (default: models/generic_latin)")
+    parser.add_argument("--data-folder", default="data/64_case",
+                       help="Path to data folder (default: data/64_case)")
+    parser.add_argument("--model-folder", default="models/new_model",
+                       help="Path to model folder (default: models/new_model)")
     parser.add_argument("--reset-db", action="store_true",
                        help="Reset database on startup")
     

@@ -18,6 +18,7 @@
 ## Environment & Shell (Critical)
 - **PowerShell 5.1 Only:** NEVER use `&&` or `||` in terminal commands. Use `;` for sequencing or run commands separately.
 - **Editable Libs:** Always use `pip install -e lib/calamari` if Calamari dependencies are missing.
+- **Environment:** The project now uses an editable install of Calamari. Any changes in lib/calamari will take effect immediately. Do not attempt to re-install from PyPI.
 
 ## Coding Standards
 - **Indentation:** Use 2 spaces strictly.
@@ -29,8 +30,14 @@
 - `lib/`: Submodules only (calamari, samuLearnUI.ts).
 - `data/`: All OCR images and .gt.txt files. gitignored.
 - `.old/`: Move replaced files here instead of deleting them.
+- `scripts/`: Entry scripts and utilities, including migration and once-run scripts too
 
 ## Specific Fixes
 - **Calamari Version:** If `__version__` is missing from `calamari_ocr`, use the monkey-patch in `src/bridge.py` or manually edit `lib/calamari/calamari_ocr/__init__.py`.
 - **Static Assets:** The backend mounts `data/` to `/static`. Ensure the API returns `/static/filename.png` for UI compatibility.
+
+## Calamari CLI Parameters
+- **Reference:** See `.windsurf/skills/calamari_params.md` for complete PAIArgumentParser documentation.
+- **Parameter Structure:** Use flattened arguments for predict.py (`--checkpoint`) vs nested for train.py (`--trainer.checkpoint`).
+- **Avoid UnknownArgumentError:** Always check `flat=True/False` mode before constructing argument lists.
 

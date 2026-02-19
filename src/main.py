@@ -96,17 +96,34 @@ async def trigger_training(request: Request):
           f.write(case['gt_text'])
         count += 1
     
+    success = False
     if count > 0:
-      ocr_bridge.train_on_failset(failset_dir)
+      print(f"🎯 Starting training with {count} samples from {count} cases")
+      success = ocr_bridge.train_on_failset(failset_dir)
+      if success:
+        print("✅ Training successful, model updated")
+      else:
+        print("❌ Training failed")
     
+    # Clean up temporary training directory
     shutil.rmtree(failset_dir, ignore_errors=True)
-    return {"success": True, "count": count}
+    return {"success": success, "count": count}
   except Exception as e:
+    print(f"❌ Training API error: {e}")
     return {"success": False, "detail": str(e)}
 
 @app.get("/api/status")
 async def get_status():
   return {"bridge": ocr_bridge.get_learner_info(), "model": ocr_bridge.model_path}
+
+@app.post("/api/model/reload")
+async def reload_model():
+  """Force reload the model - useful after manual training"""
+  try:
+    ocr_bridge.learner.reload_model()
+    return {"success": True, "message": "Model reloaded successfully"}
+  except Exception as e:
+    return {"success": False, "detail": str(e)}
 
 @app.post("/api/cases/{case_id}/correct")
 async def correct_case(case_id: int, request: Request):
