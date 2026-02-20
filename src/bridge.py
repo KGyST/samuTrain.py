@@ -27,17 +27,23 @@ class CalamariLearner:
       try:
         params = PredictorParams(silent=True)
         checkpoint_base = self.model_path.replace('.json', '')
+        print(f"🔍 Attempting to load model from: {checkpoint_base}")
         self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base)
         print(f"✅ Calamari loaded: {checkpoint_base}")
       except Exception as e:
         print(f"⚠️ Load error: {e}")
+        import traceback
+        traceback.print_exc()
 
   def do_predict(self, image_path: str) -> Tuple[str, float]:
     if not self.predictor: return "ERROR", 0.0
     try:
       img = np.array(Image.open(image_path).convert('L'))
       for sample in self.predictor.predict_raw([img]):
-        return sample.sentence, sample.avg_char_probability
+        # Use correct Prediction object attributes
+        sentence = sample.outputs.sentence
+        confidence = sample.outputs.avg_char_probability
+        return sentence, confidence
     except Exception as e:
       print(f"❌ Prediction failed: {e}")
       return "FAIL", 0.0
@@ -55,7 +61,8 @@ class CalamariLearner:
 
 class OCRBridge:
   def __init__(self):
-    self.model_dir = "models/new_model"
+    # Use model folder from environment or default to new_model
+    self.model_dir = os.environ.get('SAMUTRAIN_MODEL_FOLDER', 'models/new_model')
     self.model_path = os.path.join(self.model_dir, "best.ckpt.json")
     self.learner = CalamariLearner(self.model_path)
 
@@ -80,8 +87,8 @@ class OCRBridge:
       trainer_params.gen.train.images = [os.path.join(failset_dir, "*.bin.png")]
       trainer_params.gen.val.images = []  # No validation set for failset training
       trainer_params.gen.setup.train.batch_size = 1
-      trainer_params.gen.setup.train.num_processes = 1
-      trainer_params.gen.setup.val.num_processes = 1
+      trainer_params.gen.setup.train.num_processes = 2
+      trainer_params.gen.setup.val.num_processes = 2
       
       # Performance optimizations for Windows
       trainer_params.progress_bar = True
