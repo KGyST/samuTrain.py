@@ -179,11 +179,34 @@ class Database:
       return False
 
   def update_case_failset_status(self, case_id: int, is_failset: bool) -> bool:
-    """Update the failset status of a case"""
+    """Update the failset status of a case with detailed logging"""
     try:
       with sqlite3.connect(self.db_path) as conn:
-        conn.execute("UPDATE cases SET is_failset = ? WHERE id = ?", (is_failset, case_id))
-        conn.commit()
+        # Get current status first
+        cursor = conn.execute("SELECT is_failset FROM cases WHERE id = ?", (case_id,))
+        result = cursor.fetchone()
+        if not result:
+          print(f"❌ Case {case_id} not found")
+          return False
+        
+        was_failset = bool(result[0])
+        
+        # Only update if status actually changed
+        if was_failset != is_failset:
+          conn.execute("UPDATE cases SET is_failset = ? WHERE id = ?", (is_failset, case_id))
+          conn.commit()
+          
+          if was_failset and not is_failset:
+            print(f"✅ Case {case_id}: was in FAILSET, ok, moved to TRAINSET")
+          elif not was_failset and is_failset:
+            print(f"❌ Case {case_id}: was in TRAINSET, failed, moved to FAILSET")
+        else:
+          # Status didn't change
+          if was_failset:
+            print(f"❌ Case {case_id}: was in FAILSET, fails, stays in FAILSET")
+          else:
+            print(f"✅ Case {case_id}: was in TRAINSET, ok, stays in TRAINSET")
+        
         return True
     except Exception as e:
       print(f"Error updating failset status: {e}")
