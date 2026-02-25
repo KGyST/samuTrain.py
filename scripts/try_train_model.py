@@ -4,6 +4,9 @@ import sys
 import subprocess
 import signal
 import time
+import argparse
+import shutil
+from datetime import datetime
 
 # Add src/ and project root to sys.path
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +41,7 @@ def signal_handler(signum, frame):
   print("👋 Exiting...")
   sys.exit(0)
 
-def validate_arguments(train_folder, source_model, dest_model):
+def validate_arguments(train_folder, source_model, dest_model, force_scratch, network):
   """Validate input arguments"""
   
   # Check training folder
@@ -79,16 +82,50 @@ def validate_arguments(train_folder, source_model, dest_model):
       return False
     print(f"✅ Source model found: {source_json}")
   
-  # Create destination model folder
-  if not os.path.exists(dest_model):
+  # Handle force_scratch logic
+  if force_scratch and os.path.exists(dest_model):
+    # Check if there's an existing model
+    model_json = os.path.join(dest_model, "best.ckpt.json")
+    if os.path.exists(model_json):
+      # Archive old model to .old/
+      old_dir = os.path.join(project_root, ".old")
+      if not os.path.exists(old_dir):
+        os.makedirs(old_dir)
+      
+      timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+      archive_name = f"{os.path.basename(dest_model)}_old_{timestamp}"
+      archive_path = os.path.join(old_dir, archive_name)
+      
+      print(f"🗂️ Archiving existing model to: {archive_path}")
+      shutil.move(dest_model, archive_path)
+      
+      # Recreate clean destination folder
+      os.makedirs(dest_model)
+      print(f"✅ Created clean destination folder: {dest_model}")
+    else:
+      print(f"⚠️ Destination folder exists but no model found: {dest_model}")
+  elif not os.path.exists(dest_model):
     os.makedirs(dest_model)
     print(f"✅ Created destination folder: {dest_model}")
   else:
     print(f"⚠️ Destination folder exists: {dest_model}")
   
+  # Validate network parameter
+  if not network or not network.strip():
+    print(f"❌ Network parameter cannot be empty")
+    return False
+  
+  # Print architecture summary
+  if force_scratch:
+    print(f"🏗️ Building new model from scratch with architecture: {network}")
+  elif source_model:
+    print(f"🔄 Fine-tuning model {source_model} with architecture: {network}")
+  else:
+    print(f"🏗️ Training from scratch with architecture: {network}")
+  
   return True
 
-def train_model_continuous(train_folder, source_model, dest_model):
+def train_model_continuous(train_folder, source_model, dest_model, network, force_scratch):
   """Train model continuously with graceful shutdown support"""
   
   print(f"🔧 Starting continuous training...")
@@ -106,14 +143,15 @@ def train_model_continuous(train_folder, source_model, dest_model):
     "--trainer.best_model_prefix", "best",
     "--trainer.gen", "TrainOnly",
     "--train.batch_size", "1",
-    "--train.num_processes", "1",
+    "--train.num_processes", str(min(2, os.cpu_count() or 1)),  # Cap at 2 for Windows efficiency
     "--codec.auto_compute", "True",
     "--trainer.progress_bar", "True",
     "--trainer.val_every_n", "5",  # Validate every 5 epochs
+    "--network", network,  # Add network architecture
   ]
   
-  # Add source model if provided
-  if source_model:
+  # Add source model if provided (only if not force_scratch)
+  if source_model and not force_scratch:
     # Use the directory path for checkpoint
     checkpoint_path = source_model if os.path.isdir(source_model) else source_model.replace('.json', '')
     cmd.extend(["--checkpoint", checkpoint_path])
@@ -158,26 +196,32 @@ if __name__ == "__main__":
   signal.signal(signal.SIGINT, signal_handler)
   signal.signal(signal.SIGTERM, signal_handler)
   
-  if len(sys.argv) < 3 or len(sys.argv) > 4:
-    print("Usage: python try_train_model.py <train_folder> <dest_model> [source_model]")
-    print("Example: python try_train_model.py data/1962 models/fixed_model")
-    print("Example: python try_train_model.py data/1962 models/fixed_model models/generic_latin")
+  # Parse arguments
+  parser = argparse.ArgumentParser(description="Train Calamari OCR model with rapid architecture experimentation")
+  parser.add_argument("train_folder", help="Training data folder with .bin.png and .gt.txt files")
+  parser.add_argument("dest_model", help="Destination model folder")
+  parser.add_argument("source_model", nargs="?", help="Source model for fine-tuning (optional)")
+  parser.add_argument("--force_scratch", action="store_true", help="Force training from scratch, archive existing model")
+  parser.add_argument("--network", default="cnn=16:3x3,pool=2x2,lstm=64,dropout=0.5", 
+                     help="Network architecture string (default: cnn=16:3x3,pool=2x2,lstm=64,dropout=0.5)")
+  
+  args = parser.parse_args()
+  
+  # Validate force_scratch conflicts
+  if args.force_scratch and args.source_model:
+    print("❌ Cannot use --force_scratch with source_model. Use either --force_scratch for new training or source_model for fine-tuning.")
     sys.exit(1)
   
-  train_folder = sys.argv[1]
-  dest_model = sys.argv[2]
-  source_model = sys.argv[3] if len(sys.argv) == 4 else None
-  
   # Validate arguments
-  if not validate_arguments(train_folder, source_model, dest_model):
+  if not validate_arguments(args.train_folder, args.source_model, args.dest_model, args.force_scratch, args.network):
     sys.exit(1)
   
   # Start training
-  success = train_model_continuous(train_folder, source_model, dest_model)
+  success = train_model_continuous(args.train_folder, args.source_model, args.dest_model, args.network, args.force_scratch)
   
   if success:
-    print(f"\n✅ Training completed! Model saved to: {dest_model}")
-    print(f"🧪 Test with: python try_test_model.py {dest_model} <image_path>")
+    print(f"\n✅ Training completed! Model saved to: {args.dest_model}")
+    print(f"🧪 Test with: python try_test_model.py {args.dest_model} <image_path>")
   else:
     print(f"\n❌ Training failed!")
     sys.exit(1)
