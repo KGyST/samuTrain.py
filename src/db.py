@@ -76,6 +76,47 @@ class Database:
       cursor = conn.execute("SELECT * FROM cases WHERE img_path = ?", (img_path,))
       row = cursor.fetchone()
       return dict(row) if row else None
+  
+  def get_random_case(self, weighted: bool = True) -> Optional[Dict[str, Any]]:
+    """Get a random case, optionally weighted towards failset cases"""
+    with sqlite3.connect(self.db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      
+      if weighted:
+        # Weighted selection: 70% trainset, 30% failset
+        cursor = conn.execute("SELECT COUNT(*) as count FROM cases WHERE is_failset = FALSE")
+        train_count = cursor.fetchone()['count']
+        
+        cursor = conn.execute("SELECT COUNT(*) as count FROM cases WHERE is_failset = TRUE")
+        fail_count = cursor.fetchone()['count']
+        
+        total = train_count + fail_count
+        if total == 0:
+          return None
+          
+        import random
+        use_failset = (random.random() < 0.3) and (fail_count > 0) or (train_count == 0)
+        
+        if use_failset:
+          cursor = conn.execute("SELECT * FROM cases WHERE is_failset = TRUE ORDER BY RANDOM() LIMIT 1")
+        else:
+          cursor = conn.execute("SELECT * FROM cases WHERE is_failset = FALSE ORDER BY RANDOM() LIMIT 1")
+      else:
+        cursor = conn.execute("SELECT * FROM cases ORDER BY RANDOM() LIMIT 1")
+      
+      row = cursor.fetchone()
+      return dict(row) if row else None
+  
+  def get_all_failset_cases(self) -> List[Dict[str, Any]]:
+    """Get all cases from failset that have GT text for training"""
+    with sqlite3.connect(self.db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      cursor = conn.execute("""
+        SELECT * FROM cases 
+        WHERE is_failset = TRUE AND gt_text IS NOT NULL AND gt_text != ''
+        ORDER BY timestamp DESC
+      """)
+      return [dict(row) for row in cursor.fetchall()]
 
   def get_case(self, case_id: int) -> Optional[Dict[str, Any]]:
     """Alias for get_case_by_id for backward compatibility"""
@@ -301,6 +342,12 @@ def get_case(case_id: int):
 
 def get_case_by_img_path(img_path: str):
     return db.get_case_by_img_path(img_path)
+
+def get_random_case(weighted: bool = True):
+    return db.get_random_case(weighted)
+
+def get_all_failset_cases():
+    return db.get_all_failset_cases()
 
 def insert_case(img_path: str, ocr_text: str, confidence: float, 
                gt_text: Optional[str] = None, is_failset: bool = False, 

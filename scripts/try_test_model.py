@@ -13,6 +13,79 @@ sys.path.insert(0, project_root)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
 
+def check_model_files(model_path):
+  """Check if model files exist and are complete"""
+  
+  # Check if it's a directory (checkpoint folder) or a file path
+  if os.path.isdir(model_path):
+    # Check if it's a saved model folder (has saved_model.pb)
+    saved_model_pb = os.path.join(model_path, "saved_model.pb")
+    if os.path.exists(saved_model_pb):
+      return True
+    
+    # For checkpoint folders, check for trainer_params.json
+    trainer_json = os.path.join(model_path, "trainer_params.json")
+    if not os.path.exists(trainer_json):
+      return False
+    
+    # Check for variables folder
+    variables_dir = os.path.join(model_path, "variables")
+    if not os.path.exists(variables_dir):
+      return False
+    
+    return True
+  else:
+    # For .ckpt files, check for .json file and the ckpt folder
+    json_path = model_path + ".json"
+    ckpt_dir = model_path
+    
+    if not os.path.exists(json_path):
+      return False
+    
+    if not os.path.exists(ckpt_dir):
+      return False
+    
+    # Check for essential files in ckpt directory
+    saved_model_pb = os.path.join(ckpt_dir, "saved_model.pb")
+    if not os.path.exists(saved_model_pb):
+      return False
+    
+    return True
+
+def find_model_checkpoint(model_dir):
+  """Find model checkpoint automatically in model directory"""
+  
+  # Check for best.ckpt.json in main directory
+  best_json = os.path.join(model_dir, "best.ckpt.json")
+  if os.path.exists(best_json):
+    return os.path.join(model_dir, "best.ckpt")
+  
+  # Check for checkpoint folder with latest checkpoint
+  checkpoint_dir = os.path.join(model_dir, "checkpoint")
+  if os.path.exists(checkpoint_dir):
+    # Find all checkpoint_XXXX folders
+    checkpoints = []
+    for item in os.listdir(checkpoint_dir):
+      if item.startswith("checkpoint_") and os.path.isdir(os.path.join(checkpoint_dir, item)):
+        try:
+          num = int(item.split("_")[1])
+          checkpoints.append((num, item))
+        except (ValueError, IndexError):
+          continue
+    
+    if checkpoints:
+      # Get the latest checkpoint
+      latest = max(checkpoints, key=lambda x: x[0])
+      latest_path = os.path.join(checkpoint_dir, latest[1])
+      
+      # Check if it has variables folder (indicating a valid checkpoint)
+      variables_dir = os.path.join(latest_path, "variables")
+      if os.path.exists(variables_dir):
+        # Return the parent checkpoint directory for Calamari
+        return checkpoint_dir
+  
+  return None
+
 def validate_arguments(model_dir, image_path):
   """Validate input arguments"""
   
@@ -21,15 +94,13 @@ def validate_arguments(model_dir, image_path):
     print(f"❌ Model directory not found: {model_dir}")
     return False
   
-  # Check for model files
-  model_path = os.path.join(model_dir, "best.ckpt")
-  json_path = model_path + ".json"
-  
-  if not os.path.exists(json_path):
-    print(f"❌ Model not found: {json_path}")
+  # Auto-detect model location
+  model_path = find_model_checkpoint(model_dir)
+  if not model_path:
+    print(f"❌ No model found in: {model_dir}")
     return False
   
-  print(f"✅ Model found: {json_path}")
+  print(f"✅ Model found: {model_path}")
   
   # Check image file
   if not os.path.exists(image_path):
@@ -66,12 +137,15 @@ def test_model(model_dir, image_path):
   from PIL import Image
   
   try:
-    # Check if model exists
-    model_path = os.path.join(model_dir, "best.ckpt")
-    json_path = model_path + ".json"
+    # Auto-detect model path
+    model_path = find_model_checkpoint(model_dir)
+    if not model_path:
+      print(f"❌ Model not found in directory: {model_dir}")
+      return False
     
-    if not os.path.exists(json_path):
-      print(f"❌ Model not found: {json_path}")
+    # Check if model files exist
+    if not check_model_files(model_path):
+      print(f"❌ Model files not found or incomplete: {model_path}")
       return False
     
     # Load ground truth if available
@@ -133,6 +207,20 @@ if __name__ == "__main__":
   
   model_dir = sys.argv[1]
   image_path = sys.argv[2]
+  
+  # Quick checkpoint file check before any validation
+  model_path = find_model_checkpoint(model_dir)
+  if not model_path:
+    print(f"❌ No model found in: {model_dir}")
+    print(f"   Looking for: best.ckpt.json or checkpoint/checkpoint_XXXX folders")
+    sys.exit(1)
+  
+  if not check_model_files(model_path):
+    print(f"❌ Model files incomplete or missing: {model_path}")
+    print(f"   Required files: .json file or trainer_params.json + variables folder")
+    sys.exit(1)
+  
+  print(f"✅ Model checkpoint validated: {model_path}")
   
   # Validate arguments
   if not validate_arguments(model_dir, image_path):

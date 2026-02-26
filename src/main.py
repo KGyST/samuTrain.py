@@ -8,9 +8,11 @@ import shutil
 import time
 import glob
 import threading
+import signal
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db import Database
+from db import Database, get_random_case, get_all_failset_cases, update_case_failset_status
 from bridge import OCRBridge
 
 app = FastAPI(title="samuTrain - AutoDiscovery Mode")
@@ -52,6 +54,7 @@ def discover_new_files():
           db.insert_case(
             img_path=rel_path,
             ocr_text=pred,
+            model_prediction=pred,  # Add the model prediction
             confidence=conf,
             gt_text=gt_text, # Ha nincs GT, None marad -> ez lesz a "FAILSET" jelölt
             is_failset=False
@@ -63,9 +66,103 @@ def discover_new_files():
       
     time.sleep(10) # 10 másodpercenként nézzük át a mappát
 
+def active_evaluation_loop():
+  """Continuously evaluate random cases and update failset status"""
+  evaluation_interval = int(os.environ.get('SAMUTRAIN_EVAL_INTERVAL', '10'))  # Reduce from 30s to 10s
+  print(f"🔄 Active evaluation started (interval: {evaluation_interval}s)")
+  
+  while True:
+    try:
+      case = get_random_case(weighted=True)
+      if case and case.get('gt_text'):
+        # Get full path for prediction
+        img_path = os.path.join(DATA_FOLDER, case['img_path'])
+        pred, conf = ocr_bridge.predict(img_path)
+
+        # Update database with new prediction
+        db.update_case_ocr_result(case['id'], pred, conf)
+        
+        # Compare prediction with ground truth
+        success = (pred.strip() == case['gt_text'].strip())
+        
+        # Update failset status (this will trigger logging)
+        update_case_failset_status(case['id'], not success)
+        
+        print(f"🔍 Evaluated {case['img_path']}: {'✅ OK' if success else '❌ FAIL'} (conf: {conf:.3f})")
+        print(f"   📝 Prediction: '{pred}'")
+        print(f"   🎯 Ground Truth: '{case['gt_text']}'")
+      else:
+        print(f"⏭️  No suitable case for evaluation (need GT text)")
+        
+    except Exception as e:
+      print(f"⚠️ Evaluation error: {e}")
+      
+    time.sleep(evaluation_interval)
+
+def shutdown_training():
+  """Train model on failset cases during shutdown"""
+  print("\n🔄 Starting shutdown training...")
+  
+  try:
+    failset_cases = get_all_failset_cases()
+    if not failset_cases:
+      print("ℹ️  No failset cases for training")
+      return
+      
+    print(f"📚 Found {len(failset_cases)} failset cases for training")
+    
+    # Create temporary training directory
+    train_dir = tempfile.mkdtemp(prefix="samutrain_shutdown_")
+    
+    try:
+      # Copy failset cases to training directory
+      for case in failset_cases:
+        img_src = os.path.join(DATA_FOLDER, case['img_path'])
+        img_dst = os.path.join(train_dir, os.path.basename(case['img_path']))
+        
+        if os.path.exists(img_src):
+          shutil.copy2(img_src, img_dst)
+          
+          # Create corresponding .gt.txt file
+          gt_dst = img_dst.replace('.bin.png', '.gt.txt')
+          with open(gt_dst, 'w', encoding='utf-8') as f:
+            f.write(case['gt_text'])
+      
+      print(f"🎯 Training on {len(failset_cases)} cases...")
+      success = ocr_bridge.train_on_failset(train_dir)
+      
+      if success:
+        print("✅ Model updated successfully")
+        # Reload model after training
+        ocr_bridge.learner.reload_model()
+        print("🔄 Model reloaded")
+      else:
+        print("❌ Training failed")
+        
+    finally:
+      # Clean up temporary directory
+      shutil.rmtree(train_dir, ignore_errors=True)
+      print("🧹 Temporary files cleaned up")
+      
+  except Exception as e:
+    print(f"❌ Shutdown training error: {e}")
+
 # Elindítjuk a figyelőt egy külön szálon
 discovery_thread = threading.Thread(target=discover_new_files, daemon=True)
 discovery_thread.start()
+
+# Elindítjuk az aktív értékelést egy külön szálon
+evaluation_thread = threading.Thread(target=active_evaluation_loop, daemon=True)
+evaluation_thread.start()
+
+# Set up signal handler for graceful shutdown
+def signal_handler(sig, frame):
+  print(f"\n🛑 Received signal {sig}, shutting down...")
+  shutdown_training()
+  sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 @app.get("/api/statistics")
 async def get_statistics():

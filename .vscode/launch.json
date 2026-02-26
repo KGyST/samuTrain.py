@@ -5,11 +5,12 @@
             "name": "Debug samuTrain Server",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/run_server.py",
+            "program": "${workspaceFolder}/scripts/try_prediction.py",
+            // "program": "${workspaceFolder}/scripts/run_server.py",
             "args": [
-                "--reset-db",
-                "--data-folder", "data/single_case",
-                "--model-folder", "models/new_model"
+                // "--reset-db",
+                // "--data-folder", "data/1962",
+                // "--model-folder", "models/new_model_1962"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",

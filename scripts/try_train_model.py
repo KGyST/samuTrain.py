@@ -4,8 +4,9 @@ import sys
 import subprocess
 import signal
 import time
-import argparse
 import shutil
+import json
+import argparse
 from datetime import datetime
 
 # Add src/ and project root to sys.path
@@ -18,19 +19,30 @@ sys.path.insert(0, project_root)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
 
-# Global variable for graceful shutdown
+# Global variables for graceful shutdown
 training_process = None
+dest_model = None
 
 def signal_handler(signum, frame):
-  """Handle Ctrl+C gracefully"""
-  global training_process
-  print(f"\n🛑 Received signal {signum}. Shutting down training gracefully...")
+  """Handle Ctrl+C gracefully and save best model"""
+  global training_process, dest_model
+  print(f"\n🛑 Received signal {signum}. Saving best model before shutdown...")
   
   if training_process:
+    print("🔄 Attempting to save current model as best...")
+    
+    # Try to send SIGUSR1 to trigger model save (if supported)
+    try:
+      training_process.send_signal(signal.SIGUSR1)
+      print("📤 Sent save signal to training process")
+    except (AttributeError, OSError):
+      print("⚠️ Cannot send save signal, will terminate gracefully")
+    
     print("🔄 Terminating training process...")
     training_process.terminate()
     try:
-      training_process.wait(timeout=30)  # Wait up to 30 seconds for graceful shutdown
+      # Give more time for potential model saving
+      training_process.wait(timeout=60)  # Wait up to 60 seconds
       print("✅ Training terminated gracefully")
     except subprocess.TimeoutExpired:
       print("⚠️ Training didn't terminate gracefully, forcing kill...")
@@ -125,8 +137,11 @@ def validate_arguments(train_folder, source_model, dest_model, force_scratch, ne
   
   return True
 
-def train_model_continuous(train_folder, source_model, dest_model, network, force_scratch):
+def train_model_continuous(train_folder, source_model, dest_model_param, network, force_scratch):
   """Train model continuously with graceful shutdown support"""
+  
+  global dest_model
+  dest_model = dest_model_param
   
   print(f"🔧 Starting continuous training...")
   print(f"📁 Training data: {train_folder}")
@@ -134,7 +149,7 @@ def train_model_continuous(train_folder, source_model, dest_model, network, forc
   print(f"🎯 Destination: {dest_model}")
   print(f"⚠️ Press Ctrl+C to stop training and save model")
   
-  # Build training command
+  # Build training command with smooth training parameters
   cmd = [
     sys.executable, "-m", "calamari_ocr.scripts.train",
     "--train.images", os.path.join(train_folder, "*.bin.png"),
@@ -146,7 +161,10 @@ def train_model_continuous(train_folder, source_model, dest_model, network, forc
     "--train.num_processes", str(min(2, os.cpu_count() or 1)),  # Cap at 2 for Windows efficiency
     "--codec.auto_compute", "True",
     "--trainer.progress_bar", "True",
-    "--trainer.val_every_n", "5",  # Validate every 5 epochs
+    "--trainer.val_every_n", "10",  # Validate every 10 epochs for smooth training with regular saves
+    "--trainer.progress_bar_mode", "0",  # Minimize progress bar output
+    "--trainer.tf_cpp_min_log_level", "3",  # Reduce TensorFlow logging
+    "--trainer.write_checkpoints", "True",  # Ensure checkpoints are written
     "--network", network,  # Add network architecture
   ]
   

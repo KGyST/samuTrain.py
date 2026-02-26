@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>samuTrain OCR Monitor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 1rem 2rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .header h1 {
+      font-size: 1.8rem;
+      font-weight: 600;
+    }
+    
+    .header p {
+      opacity: 0.9;
+      margin-top: 0.25rem;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    
+    .stat-card {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    
+    .stat-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #667eea;
+      margin-bottom: 0.5rem;
+    }
+    
+    .stat-label {
+      color: #666;
+      font-size: 0.9rem;
+    }
+    
+    .controls {
+      background: white;
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #5a6fd8;
+    }
+    
+    .btn-secondary {
+      background: #e2e8f0;
+      color: #333;
+    }
+    
+    .btn-secondary:hover {
+      background: #cbd5e0;
+    }
+    
+    .checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .cases-container {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    
+    .case-item {
+      border-bottom: 1px solid #eee;
+      padding: 1rem;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      transition: background 0.2s;
+    }
+    
+    .case-item:hover {
+      background: #f8f9fa;
+    }
+    
+    .case-item:last-child {
+      border-bottom: none;
+    }
+    
+    .case-image {
+      width: 160px;
+      height: 80px;
+      object-fit: contain;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      background: #f8f9fa;
+      flex-shrink: 0;
+    }
+    
+    .case-content {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .case-text {
+      font-family: 'Courier New', monospace;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: #333;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: background 0.2s;
+      word-break: break-all;
+    }
+    
+    .case-text:hover {
+      background: #e9ecef;
+    }
+    
+    .case-text.editing {
+      background: #fff3cd;
+      border: 2px solid #856404;
+      padding: 0.25rem 0.5rem;
+    }
+    
+    .case-model-guess {
+      margin-top: 0.25rem;
+      padding: 0.15rem 0.25rem;
+      background: #f8f9fa;
+      border-radius: 3px;
+      border: 1px solid #e9ecef;
+      opacity: 0.8;
+    }
+    
+    .case-text-model {
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem;
+      color: #6c757d;
+      cursor: default;
+      word-break: break-all;
+      font-weight: normal;
+    }
+    
+    .case-meta {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      font-size: 0.8rem;
+      color: #666;
+    }
+    
+    .confidence {
+      padding: 0.2rem 0.5rem;
+      border-radius: 12px;
+      font-weight: 500;
+    }
+    
+    .confidence.high {
+      background: #d4edda;
+      color: #155724;
+    }
+    
+    .confidence.medium {
+      background: #fff3cd;
+      color: #856404;
+    }
+    
+    .confidence.low {
+      background: #ff9800;
+      color: white;
+    }
+    
+    .confidence.zero {
+      background: #6c757d;
+      color: white;
+    }
+    
+    .failset-badge {
+      background: #dc3545;
+      color: white;
+      padding: 0.2rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+    
+    .corrected-badge {
+      background: #28a745;
+      color: white;
+      padding: 0.2rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      animation: fadeIn 0.3s ease-in;
+    }
+    
+    .movement-badge {
+      padding: 0.2rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      margin-right: 0.5rem;
+    }
+    
+    .movement-badge.trainset {
+      background: #28a745;
+      color: white;
+    }
+    
+    .movement-badge.failset {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .movement-badge.corrected {
+      background: #17a2b8;
+      color: white;
+    }
+    
+    .solution-info {
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      border-radius: 4px;
+      padding: 0.5rem;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #856404;
+    }
+    
+    .correction-info {
+      background: #d1ecf1;
+      border: 1px solid #bee5eb;
+      border-radius: 4px;
+      padding: 0.5rem;
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #0c5460;
+    }
+    
+    .case-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      font-size: 0.7rem;
+      color: #666;
+      background: #f8f9fa;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+    }
+    
+    .case-id {
+      font-weight: 600;
+      color: #495057;
+    }
+    
+    .case-path {
+      font-family: 'Courier New', monospace;
+      color: #6c757d;
+    }
+    
+    .timestamp {
+      color: #999;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 2rem;
+      color: #666;
+    }
+    
+    .error {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 1rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+    
+    .status-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+    }
+    
+    .status-online {
+      background: #28a745;
+    }
+    
+    .status-offline {
+      background: #dc3545;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.9); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    
+    @media (max-width: 768px) {
+      .container {
+        padding: 1rem;
+      }
+      
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      
+      .case-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      
+      .case-image {
+        width: 100%;
+        height: 120px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎯 samuTrain OCR Monitor</h1>
+    <p>Real-time monitoring of OCR training results and failset cases</p>
+  </div>
+  
+  <div class="container">
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card">
+        <div class="stat-value" id="totalCases">-</div>
+        <div class="stat-label">Total Cases</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="failsetCases">-</div>
+        <div class="stat-label">Failset Cases</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="avgConfidence">-</div>
+        <div class="stat-label">Avg Confidence</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="recentActivity">-</div>
+        <div class="stat-label">Recent Activity (1h)</div>
+      </div>
+    </div>
+    
+    <div class="controls">
+      <button class="btn btn-primary" onclick="refreshData()">🔄 Refresh Now</button>
+      <div class="checkbox-wrapper">
+        <input type="checkbox" id="failsetOnly" onchange="refreshData()">
+        <label for="failsetOnly">Show failset only</label>
+      </div>
+      <div class="checkbox-wrapper">
+        <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()">
+        <label for="autoRefresh">Auto-refresh (3s)</label>
+      </div>
+      <span id="status" class="status-indicator status-offline"></span>
+      <span id="statusText">Offline</span>
+    </div>
+    
+    <div id="errorContainer"></div>
+    
+    <div class="cases-container">
+      <div id="casesList" class="loading">
+        Loading OCR cases...
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    let autoRefreshInterval = null;
+    const API_BASE = window.location.origin;
+    
+    async function fetchAPI(endpoint, options = {}) {
+      try {
+        const url = `${API_BASE}${endpoint}`;
+        const response = await fetch(url, {
+          method: options.method || 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            ...options.headers
+          },
+          body: options.body ? JSON.stringify(options.body) : undefined
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return await response.json();
+      } catch (error) {
+        console.error(`API Error (${endpoint}):`, error);
+        throw error;
+      }
+    }
+    
+    function showError(message) {
+      const errorContainer = document.getElementById('errorContainer');
+      errorContainer.innerHTML = `<div class="error">❌ ${message}</div>`;
+      setTimeout(() => {
+        errorContainer.innerHTML = '';
+      }, 5000);
+    }
+    
+    function setStatus(online, text = '') {
+      const status = document.getElementById('status');
+      const statusText = document.getElementById('statusText');
+      
+      if (online) {
+        status.className = 'status-indicator status-online';
+        statusText.textContent = text || 'Online';
+      } else {
+        status.className = 'status-indicator status-offline';
+        statusText.textContent = text || 'Offline';
+      }
+    }
+    
+    function getConfidenceClass(confidence) {
+      if (confidence >= 0.8) return 'high';
+      if (confidence >= 0.6) return 'medium';
+      if (confidence > 0.0) return 'low';
+      return 'zero'; // For 0.0 confidence - show actual prediction
+    }
+    
+    function formatTimestamp(timestamp) {
+      const date = new Date(timestamp);
+      return date.toLocaleString();
+    }
+    
+    function formatImagePath(imagePath) {
+      // Convert local path to display URL
+      return `/static/${imagePath}`;
+    }
+    
+    async function loadStatistics() {
+      try {
+        const stats = await fetchAPI('/api/statistics');
+        
+        document.getElementById('totalCases').textContent = stats.total_cases || 0;
+        document.getElementById('failsetCases').textContent = stats.failset_cases || 0;
+        document.getElementById('avgConfidence').textContent = (stats.avg_confidence || 0).toFixed(2);
+        document.getElementById('recentActivity').textContent = stats.recent_activity || 0;
+        
+        const failsetRatio = stats.failset_ratio || 0;
+        document.getElementById('failsetCases').title = `Failset ratio: ${failsetRatio.toFixed(1)}%`;
+        
+      } catch (error) {
+        console.error('Error loading statistics:', error);
+        showError('Failed to load statistics');
+      }
+    }
+    
+    async function loadCases() {
+      try {
+        const failsetOnly = document.getElementById('failsetOnly').checked;
+        const limit = 100; // Get more cases for better deduplication
+        
+        const cases = await fetchAPI(`/api/cases?limit=${limit}&failset_only=${failsetOnly}`);
+        
+        const casesList = document.getElementById('casesList');
+        
+        if (cases.length === 0) {
+          casesList.innerHTML = '<div class="loading">No OCR cases found</div>';
+          return;
+        }
+        
+        // Debug: Show all cases for debugging
+        console.log('All cases from API:', cases);
+        console.log('Total cases loaded:', cases.length);
+        
+        // Deduplicate cases by img_path - keep only the latest case per image
+        const latestCasesByImage = {};
+        
+        for (const case_ of cases) {
+          const imagePath = case_.img_path;
+          // Keep the case with the most recent timestamp (or highest ID if timestamps are equal)
+          if (!latestCasesByImage[imagePath] || 
+              case_.timestamp > latestCasesByImage[imagePath].timestamp ||
+              (case_.timestamp === latestCasesByImage[imagePath].timestamp && case_.id > latestCasesByImage[imagePath].id)) {
+            latestCasesByImage[imagePath] = case_;
+          }
+        }
+        
+        const uniqueCases = Object.values(latestCasesByImage);
+        console.log('Deduplicated cases (latest per image):', uniqueCases);
+        console.log('Unique images:', uniqueCases.length);
+        
+        // Sort by confidence (lowest confidence first - most problematic)
+        uniqueCases.sort((a, b) => a.confidence - b.confidence);
+        
+        // Take top 50 after sorting
+        const sortedCases = uniqueCases.slice(0, 50);
+        
+        const casesHTML = sortedCases.map(case_ => {
+          try {
+            const confidenceClass = getConfidenceClass(case_.confidence);
+            const confidencePercent = (case_.confidence * 100).toFixed(1);
+            const timestamp = formatTimestamp(case_.timestamp);
+            const imageUrl = formatImagePath(case_.img_path);
+            
+            // Debug logging
+            console.log('Processing case:', {
+              id: case_.id,
+              ocr_text: case_.ocr_text,
+              gt_text: case_.gt_text,
+              img_path: case_.img_path,
+              confidence: case_.confidence
+            });
+            
+            // Determine movement status (this would come from backend in real implementation)
+            let movementInfo = '';
+            if (case_.is_corrected) {
+              movementInfo = '<span class="movement-badge corrected">✓ CORRECTED</span>';
+            } else if (case_.is_failset) {
+              movementInfo = '<span class="movement-badge failset">❌ FAILSET</span>';
+            } else {
+              movementInfo = '<span class="movement-badge trainset">✅ TRAINSET</span>';
+            }
+            
+            return `
+              <div class="case-item" data-case-id="${case_.id}">
+                <img src="${imageUrl}" alt="${case_.img_path}" class="case-image" 
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div style="display:none; width:160px; height:80px; background:#f0f0f0; border-radius:4px; align-items:center; justify-content:center; font-size:0.8rem; color:#999; border:1px solid #ddd;">
+                  No Image
+                </div>
+                <div class="case-content">
+                  <div class="case-header">
+                    <span class="case-id">🆔 ID: ${case_.id}</span>
+                    <span class="case-path">${case_.img_path.split('/').pop()}</span>
+                  </div>
+                  <div class="case-text" onclick="makeEditable(this, event)" data-original-text="${(case_.gt_text || '').replace(/"/g, '&quot;')}">"${case_.gt_text || 'No GT - click to add'}"</div>
+                  <div class="case-model-guess">
+                    <div class="case-text-model" title="Model's current guess">Guess: "${case_.ocr_text || '(empty)'}"</div>
+                  </div>
+                  <div class="case-meta">
+                    <span class="confidence ${confidenceClass}">${confidencePercent}%</span>
+                    ${movementInfo}
+                    <span class="timestamp">${timestamp}</span>
+                  </div>
+                  ${case_.ground_truth ? `<div class="solution-info">💡 Solution: "${case_.ground_truth}"</div>` : ''}
+                  ${case_.is_corrected ? `<div class="correction-info">📝 User corrected this case</div>` : ''}
+                </div>
+              </div>
+            `;
+          } catch (error) {
+            console.error('Error processing case:', case_, error);
+            return `<div class="case-item error">❌ Error processing case ${case_.id || 'unknown'}</div>`;
+          }
+        }).join('');
+        
+        casesList.innerHTML = casesHTML;
+        setStatus(true, `Loaded ${sortedCases.length} unique cases (sorted by confidence)`);
+        
+      } catch (error) {
+        console.error('Error loading cases:', error);
+        showError('Failed to load OCR cases');
+        document.getElementById('casesList').innerHTML = '<div class="loading">Error loading cases</div>';
+        setStatus(false);
+      }
+    }
+    
+    let isEditing = false; // Global editing state
+
+function makeEditable(element, event) {
+  // Prevent default behavior
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  
+  console.log('makeEditable called with element:', element);
+  
+  // Don't make editable if already editing
+  if (element.classList.contains('editing')) {
+    console.log('Element already editing, returning');
+    return;
+  }
+  
+  // Set global editing state to prevent refresh
+  isEditing = true;
+  
+  const originalText = element.getAttribute('data-original-text').replace(/^"|"$/g, '');
+  const caseItem = element.closest('.case-item');
+  const caseId = caseItem ? caseItem.getAttribute('data-case-id') : 'NO_CASE_ID';
+  
+  console.log('makeEditable called:', { 
+    originalText, 
+    caseId,
+    caseItem: !!caseItem,
+    elementHTML: element.outerHTML.substring(0, 100)
+  });
+  
+  element.classList.add('editing');
+  
+  // Create input field
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'case-text-input';
+  input.value = originalText;
+  
+  // Replace text with input
+  element.innerHTML = '';
+  element.appendChild(input);
+  input.focus();
+  input.select();
+  
+  // Handle save on blur or enter
+  const saveEdit = async () => {
+    console.log('saveEdit called');
+    const newText = input.value.trim();
+    console.log('New text:', newText, 'Original text:', originalText, 'Case ID:', caseId);
+    
+    element.classList.remove('editing');
+    element.innerHTML = `"${newText}"`;
+    element.setAttribute('data-original-text', newText.replace(/"/g, '&quot;'));
+    
+    // Reset editing state
+    isEditing = false;
+    
+    // Send correction to backend
+    if (newText !== originalText && caseId) {
+      console.log('Attempting correction:', { caseId, originalText, newText });
+      try {
+        const response = await fetchAPI(`/api/cases/${caseId}/correct`, {
+          method: 'POST',
+          body: {
+            corrected_text: newText
+          }
+        });
+        
+        console.log('Correction response:', response);
+        
+        if (response.success) {
+          console.log(`Correction saved for case ${caseId}: "${originalText}" -> "${newText}"`);
+          
+          // Visual feedback for successful correction
+          element.style.background = '#d4edda';
+          setTimeout(() => {
+            element.style.background = '';
+          }, 2000);
+          
+          // Add corrected indicator
+          const caseItem = element.closest('.case-item');
+          if (!caseItem.querySelector('.corrected-badge')) {
+            const correctedBadge = document.createElement('span');
+            correctedBadge.className = 'corrected-badge';
+            correctedBadge.textContent = 'CORRECTED';
+            correctedBadge.title = `Corrected from: "${originalText}"`;
+            caseItem.querySelector('.case-meta').appendChild(correctedBadge);
+          }
+        } else {
+          console.error('Failed to save correction:', response);
+          showError('Failed to save correction');
+        }
+      } catch (error) {
+        console.error('Error saving correction:', error);
+        showError('Error saving correction');
+      }
+    } else {
+      // Visual feedback for no change
+      element.style.background = '#f8f9fa';
+      setTimeout(() => {
+        element.style.background = '';
+      }, 1000);
+    }
+  };
+  
+  // Handle cancel on escape
+  const cancelEdit = () => {
+    element.classList.remove('editing');
+    element.innerHTML = `"${originalText}"`;
+    
+    // Reset editing state
+    isEditing = false;
+  };
+  
+  input.addEventListener('blur', () => {
+    console.log('Input blur event triggered');
+    saveEdit();
+  });
+  
+  input.addEventListener('keydown', (e) => {
+    console.log('Key pressed:', e.key);
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      console.log('Enter key pressed, calling saveEdit');
+      saveEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      console.log('Escape key pressed, calling cancelEdit');
+      cancelEdit();
+    }
+  });
+}
+
+async function refreshData() {
+      // Skip refresh if user is editing (multiple checks for robustness)
+      if (isEditing) {
+        console.log('Skipping refresh - user is editing (global flag)');
+        return;
+      }
+      
+      // Also check if any input elements exist (active editing)
+      const activeInputs = document.querySelectorAll('.case-text-input');
+      if (activeInputs.length > 0) {
+        console.log('Skipping refresh - active input fields detected');
+        return;
+      }
+      
+      await Promise.all([
+        loadStatistics(),
+        loadCases()
+      ]);
+    }
+    
+    function toggleAutoRefresh() {
+      const autoRefresh = document.getElementById('autoRefresh').checked;
+      
+      if (autoRefresh) {
+        autoRefreshInterval = setInterval(refreshData, 3000);
+        console.log('Auto-refresh enabled (3s interval)');
+      } else {
+        if (autoRefreshInterval) {
+          clearInterval(autoRefreshInterval);
+          autoRefreshInterval = null;
+        }
+        console.log('Auto-refresh disabled');
+      }
+    }
+    
+    // Initialize
+    document.addEventListener('DOMContentLoaded', async () => {
+      console.log('samuTrain OCR Monitor initialized');
+      
+      // Load initial data
+      await refreshData();
+      
+      // Start auto-refresh
+      toggleAutoRefresh();
+      
+      // Add keyboard shortcuts
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'r' && !e.target.matches('input, textarea')) {
+          e.preventDefault();
+          refreshData();
+        }
+      });
+    });
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+      }
+    });
+  </script>
+</body>
+</html>

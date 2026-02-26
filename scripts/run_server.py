@@ -15,6 +15,12 @@ src_dir = os.path.join(project_root, 'src')
 sys.path.insert(0, src_dir)
 sys.path.insert(0, project_root)
 
+# Force use of virtual environment
+venv_python = os.path.join(project_root, 'venv_310', 'Scripts', 'python.exe')
+if os.path.exists(venv_python) and sys.executable != venv_python:
+    print(f"⚠️ Switching to virtual environment Python: {venv_python}")
+    os.execv(venv_python, [venv_python] + sys.argv)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Start samuTrain V2 Server")
     parser.add_argument("--data-folder", default="data/64_case",

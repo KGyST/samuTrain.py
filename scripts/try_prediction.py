@@ -21,7 +21,7 @@ def test_prediction():
   print(f"Bridge info: {ocr_bridge.get_learner_info()}")
   
   # Test on one of the 1962 images
-  test_image = os.path.join(project_root, 'data', '1962', '0002_010075.bin.png')
+  test_image = os.path.join(project_root, 'data', '1962', '_0001_01006f.bin.png')
   print(f"Testing on: {test_image}")
   
   if not os.path.exists(test_image):
@@ -49,8 +49,8 @@ def test_prediction():
         print(f"Sample outputs: {sample.outputs}")
         print(f"Sample outputs type: {type(sample.outputs)}")
         if sample.outputs:
+          print(f"Sample outputs type: {type(sample.outputs)}")
           print(f"Sample outputs[0]: {sample.outputs[0]}")
-          print(f"Sample outputs[0] type: {type(sample.outputs[0])}")
         print(f"Sample targets: {sample.targets}")
         break
         

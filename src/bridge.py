@@ -7,6 +7,7 @@ from typing import Tuple
 import sys
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
 
 try:
   from calamari_ocr.ocr.predict.predictor import Predictor
@@ -23,6 +24,7 @@ class CalamariLearner:
   def __init__(self, model_path: str):
     self.model_path = model_path
     self.predictor = None
+    print(f"🔧 CalamariLearner LIB_MODE: {LIB_MODE}")
     if LIB_MODE:
       try:
         params = PredictorParams(silent=True)
@@ -34,18 +36,23 @@ class CalamariLearner:
         print(f"⚠️ Load error: {e}")
         import traceback
         traceback.print_exc()
+    else:
+      print("❌ Calamari library not available - using fallback")
 
   def do_predict(self, image_path: str) -> Tuple[str, float]:
-    if not self.predictor: return "ERROR", 0.0
+    if not self.predictor: 
+      print(f"❌ No predictor available for {os.path.basename(image_path)}")
+      return "ERROR", 0.0
     try:
       img = np.array(Image.open(image_path).convert('L'))
       for sample in self.predictor.predict_raw([img]):
         # Use correct Prediction object attributes
         sentence = sample.outputs.sentence
         confidence = sample.outputs.avg_char_probability
+        print(f"🔮 Raw prediction for {os.path.basename(image_path)}: '{sentence}' (conf: {confidence:.3f})")
         return sentence, confidence
     except Exception as e:
-      print(f"❌ Prediction failed: {e}")
+      print(f"❌ Prediction failed for {os.path.basename(image_path)}: {e}")
       return "FAIL", 0.0
 
   def reload_model(self):
@@ -83,15 +90,15 @@ class OCRBridge:
       
       # Set the training parameters equivalent to the command line
       trainer_params.output_dir = self.model_dir
-      trainer_params.epochs = 5
+      trainer_params.epochs = 10  # Increase epochs for more learning
       trainer_params.gen.train.images = [os.path.join(failset_dir, "*.bin.png")]
-      trainer_params.gen.val.images = []  # No validation set for failset training
+      trainer_params.gen.val.images = [os.path.join("data/single_case", "*.bin.png")]  # Use single_case as validation
       trainer_params.gen.setup.train.batch_size = 1
-      trainer_params.gen.setup.train.num_processes = 2
-      trainer_params.gen.setup.val.num_processes = 2
+      trainer_params.gen.setup.train.num_processes = 1  # Single process for stability
+      trainer_params.gen.setup.val.num_processes = 1
       
-      # Performance optimizations for Windows
-      trainer_params.progress_bar = True
+      # Performance optimizations
+      trainer_params.progress_bar = False  # Disable progress bar to reduce output
       
       # Run the training
       result = calamari_train(trainer_params)
