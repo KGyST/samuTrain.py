@@ -37,37 +37,78 @@ def get_current_epoch(model_folder):
     print(f"⚠️ Could not determine current epoch: {e}")
     return 1
 
-def resume_training(data_folder, model_folder, max_epochs=None, val_every_n=None, timeout=None):
-  """Resume training with optional timeout for final validation"""
+def modify_trainer_params(model_folder, epochs, val_every_n):
+  """Modify trainer_params.json to limit epochs and set validation frequency"""
+  trainer_params_path = os.path.join(model_folder, "trainer_params.json")
+  
+  if not os.path.exists(trainer_params_path):
+    # Copy from latest checkpoint if not in model folder
+    checkpoint_dir = os.path.join(model_folder, "checkpoint")
+    if os.path.exists(checkpoint_dir):
+      checkpoints = []
+      for item in os.listdir(checkpoint_dir):
+        if item.startswith("checkpoint_") and os.path.isdir(os.path.join(checkpoint_dir, item)):
+          try:
+            num = int(item.split("_")[1])
+            checkpoints.append((num, item))
+          except (ValueError, IndexError):
+            continue
+      
+      if checkpoints:
+        latest = max(checkpoints, key=lambda x: x[0])
+        source_params = os.path.join(checkpoint_dir, latest[1], "trainer_params.json")
+        if os.path.exists(source_params):
+          import shutil
+          shutil.copy2(source_params, trainer_params_path)
+          print(f"📋 Copied trainer_params.json from checkpoint {latest[1]}")
+  
+  # Modify the parameters
+  if os.path.exists(trainer_params_path):
+    with open(trainer_params_path, 'r') as f:
+      params = json.load(f)
+    
+    params["epochs"] = epochs
+    params["val_every_n"] = val_every_n
+    if "learning_rate" in params:
+      params["learning_rate"]["epochs"] = epochs
+    
+    with open(trainer_params_path, 'w') as f:
+      json.dump(params, f, indent=2)
+    
+    print(f"🎯 Set epochs to {epochs}, validation every {val_every_n} epochs")
+    return True
+  else:
+    print(f"❌ trainer_params.json not found")
+    return False
+
+def resume_training(data_folder, model_folder, max_epochs=None, val_every_n=None):
+  """Resume training with optional epoch limiting"""
   current_python = sys.executable
   
-  # Always use resume_training script - it's the only one that works reliably
+  # Modify trainer_params.json if epoch limit is specified
+  if max_epochs is not None:
+    if modify_trainer_params(model_folder, max_epochs, val_every_n or 1):
+      print("🔧 Modified trainer_params.json for limited training")
+    else:
+      print("⚠️ Could not modify trainer_params.json")
+  
+  # Use resume_training script
   cmd = [
     current_python, "-m", "calamari_ocr.scripts.resume_training",
     model_folder  # Pass model directory, not checkpoint prefix
   ]
   
-  if max_epochs or val_every_n:
-    print(f"🎯 Final validation phase - will run until validation completes")
-    if timeout:
-      print(f"⏱️ Timeout set to {timeout} seconds")
+  if max_epochs is not None:
+    print(f"🎯 Final validation phase - will stop after {max_epochs} epochs")
   else:
-    print("� Normal training phase")
+    print("🔄 Normal training phase")
   
   print(f"🚀 Resuming training from: {model_folder}")
   print(f"🐍 Using python: {current_python}")
   print(f"📁 Data folder: {data_folder}")
   
   # Forward environment to ensure TF/Calamari is found
-  try:
-    if timeout:
-      result = subprocess.run(cmd, env=os.environ.copy(), timeout=timeout)
-    else:
-      result = subprocess.run(cmd, env=os.environ.copy())
-    return result
-  except subprocess.TimeoutExpired:
-    print(f"⏱️ Training stopped after {timeout} seconds (validation should have completed)")
-    return subprocess.CompletedProcess(cmd, 0, "Training stopped by timeout", "")
+  return subprocess.run(cmd, env=os.environ.copy())
 
 if __name__ == "__main__":
   if len(sys.argv) != 3:
@@ -103,13 +144,12 @@ if __name__ == "__main__":
     print(f"🎯 Running final training for {final_epoch} epochs to trigger validation")
     
     try:
-      # Resume with timeout for final validation (5 minutes should be enough for 1 epoch)
+      # Resume with epoch limiting for final validation
       result = resume_training(
         data_folder, 
         model_folder, 
         max_epochs=final_epoch,
-        val_every_n=1,
-        timeout=300  # 5 minutes timeout
+        val_every_n=1
       )
       
       if result.returncode == 0:
