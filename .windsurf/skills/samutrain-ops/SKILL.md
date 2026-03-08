@@ -1,5 +1,5 @@
 ---
-name: samutrain_ops
+name: samutrain-ops
 description: Tools and rules for managing samuTrain server, database resets, and code style.
 ---
 

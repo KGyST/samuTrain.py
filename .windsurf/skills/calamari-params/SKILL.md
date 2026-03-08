@@ -1,5 +1,5 @@
 ---
-name: calamari_params
+name: calamari-params
 description: Calamari parameters
 ---
 
