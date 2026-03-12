@@ -130,15 +130,15 @@ def collect_chars(data_folder):
   return sorted(list(chars))
 
 def backup_model(model_dir):
-  """Backup model directory with timestamp"""
+  """Backup model directory by renaming to .old format"""
   if not os.path.exists(model_dir):
     return None
   
   timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  backup_dir = f"{model_dir}_backup_{timestamp}"
+  backup_dir = f"{model_dir}.{timestamp}.old"
   
   try:
-    shutil.copytree(model_dir, backup_dir)
+    shutil.move(model_dir, backup_dir)
     print(f"Model backed up to: {backup_dir}")
     return backup_dir
   except Exception as e:
@@ -194,29 +194,73 @@ def signal_handler(signum, frame):
   print("Exiting...")
   sys.exit(0)
 
+def copy_essential_files(src_dir, dst_dir, files_to_copy=None):
+  """Copy essential files from backup to new model folder for continuation"""
+  if files_to_copy is None:
+    files_to_copy = [
+      "best.ckpt", "best.ckpt.json", "best.ckpt.data-00000-of-00001", "best.ckpt.index",
+      "trainer_params.json", "extended_charset.txt", "charset.txt"
+    ]
+  
+  copied_files = []
+  for filename in files_to_copy:
+    src_path = os.path.join(src_dir, filename)
+    dst_path = os.path.join(dst_dir, filename)
+    if os.path.exists(src_path):
+      try:
+        if os.path.isdir(src_path):
+          # Copy directory recursively
+          if os.path.exists(dst_path):
+            shutil.rmtree(dst_path)
+          shutil.copytree(src_path, dst_path)
+          copied_files.append(filename + " (directory)")
+          print(f"Copied essential directory: {filename}")
+        elif os.path.isfile(src_path):
+          shutil.copy2(src_path, dst_path)
+          copied_files.append(filename)
+          print(f"Copied essential file: {filename}")
+      except Exception as e:
+        print(f"Warning: Could not copy {filename}: {e}")
+  
+  if copied_files:
+    print(f"Copied {len(copied_files)} essential files/directories for model continuation")
+  else:
+    print("Warning: No essential files found to copy")
+
 def continue_learning(data_folder, checkpoint_folder, network=None, backup=True):
   """Continue learning with codec extension, network resizing, and graceful shutdown"""
   global model_dir
   model_dir = checkpoint_folder
-  
+
   # Validate inputs
   if not os.path.exists(data_folder):
     raise FileNotFoundError(f"Data directory not found: {data_folder}")
-  
+
   if not os.path.exists(checkpoint_folder):
     raise FileNotFoundError(f"Checkpoint directory not found: {checkpoint_folder}")
-  
+
+  # Pre-training backup: rename original folder to .old
+  backup_dir = None
+  if backup:
+    backup_dir = backup_model(checkpoint_folder)
+    if backup_dir is None:
+      print("Warning: Backup failed, proceeding without backup")
+    else:
+      # Create new empty folder for training
+      os.makedirs(checkpoint_folder)
+      # Copy essential files from backup to new folder
+      copy_essential_files(backup_dir, checkpoint_folder)
+
   # Find checkpoint file in original directory first
   checkpoint_file = os.path.join(checkpoint_folder, "best.ckpt")
   if not os.path.exists(checkpoint_file):
     checkpoint_file = os.path.join(checkpoint_folder, "best.ckpt.json")
-  
+
   if not os.path.exists(checkpoint_file):
     raise FileNotFoundError(f"Checkpoint not found in: {checkpoint_folder}")
 
-  # Train to original location to preserve checkpoint continuation
+  # Train to new folder
   new_model_dir = checkpoint_folder
-  final_backup_target = f"{checkpoint_folder}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.old"
   
   # Collect characters and determine network architecture
   chars = collect_chars(data_folder)
@@ -295,22 +339,7 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
     training_process.wait()
     print("Training completed successfully!")
     
-    # Handle model replacement - backup after training completes
-    if final_backup_target and os.path.exists(checkpoint_folder):
-      try:
-        # Move original model to .old backup
-        shutil.move(checkpoint_folder, final_backup_target)
-        print(f"Original model backed up to: {final_backup_target}")
-        
-        # Purge large checkpoint files from backup to save space
-        purge_checkpoint_folder(final_backup_target)
-        
-        print(f"Model replacement completed - original backed up and purged")
-        
-      except Exception as e:
-        print(f"Warning: Model backup failed: {e}")
-    
-    # Show final codec if available (check original location after replacement)
+    # Show final codec if available
     final_params = os.path.join(checkpoint_folder, "trainer_params.json")
     if os.path.exists(final_params):
       with open(final_params, 'r') as f:
