@@ -57,4 +57,4 @@ if __name__ == "__main__":
     print("📚 API docs at: http://127.0.0.1:8000/docs")
     print("⏹️  Press Ctrl+C to stop the server")
     
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)

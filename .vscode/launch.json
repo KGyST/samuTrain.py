@@ -18,6 +18,19 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
             }
+        },
+        {
+            "name": "Run try_continue_learning",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/try_continue_learning.py",
+            "args": ["data/single_case", "models/tiny_test"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/venv_310/Scripts/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
+            }
         }
     ]
 }

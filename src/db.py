@@ -25,15 +25,51 @@ class Database:
             is_failset BOOLEAN DEFAULT FALSE
           )
         """)
-        conn.commit()
-        print("✅ Database table created successfully")
         
-        # Verify table exists
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cases'")
-        if cursor.fetchone():
-          print("✅ Verified: 'cases' table exists")
+        # Check if training_sessions exists and has correct structure
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='training_sessions'")
+        table_exists = cursor.fetchone() is not None
+        
+        if table_exists:
+          # Check if table has the expected columns
+          cursor = conn.execute("PRAGMA table_info(training_sessions)")
+          columns = [row[1] for row in cursor.fetchall()]
+          
+          expected_columns = ['session_id', 'data_folder', 'checkpoint_folder', 'network', 'backup_folder', 'model_folder', 'status', 'chars_count', 'started_at', 'completed_at', 'error_message']
+          
+          if not all(col in columns for col in expected_columns):
+            print("⚠️ Existing training_sessions table has different structure, creating new table")
+            conn.execute("DROP TABLE training_sessions")
+            table_exists = False
+        
+        if not table_exists:
+          conn.execute("""
+            CREATE TABLE training_sessions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT UNIQUE NOT NULL,
+              data_folder TEXT NOT NULL,
+              checkpoint_folder TEXT NOT NULL,
+              network TEXT,
+              backup_folder TEXT,
+              model_folder TEXT,
+              status TEXT DEFAULT 'started',
+              chars_count INTEGER DEFAULT 0,
+              started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              completed_at DATETIME,
+              error_message TEXT
+            )
+          """)
+        
+        conn.commit()
+        print("✅ Database tables created successfully")
+        
+        # Verify tables exist
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('cases', 'training_sessions')")
+        tables = [row[0] for row in cursor.fetchall()]
+        if len(tables) == 2:
+          print("✅ Verified: 'cases' and 'training_sessions' tables exist")
         else:
-          print("❌ Error: 'cases' table not found after creation")
+          print(f"❌ Error: Missing tables: {tables}")
     except Exception as e:
       print(f"❌ Database initialization error: {e}")
   
@@ -265,39 +301,66 @@ class Database:
       return False
 
   def get_statistics(self) -> Dict[str, Any]:
-    """Get system statistics"""
+    """Get database statistics"""
     with sqlite3.connect(self.db_path) as conn:
-      conn.row_factory = sqlite3.Row
+      cursor = conn.execute("SELECT COUNT(*) FROM cases")
+      total = cursor.fetchone()[0]
       
-      # Total cases
-      total_cursor = conn.execute("SELECT COUNT(*) as count FROM cases")
-      total_cases = total_cursor.fetchone()['count']
+      cursor = conn.execute("SELECT COUNT(*) FROM cases WHERE is_failset = 1")
+      failset = cursor.fetchone()[0]
       
-      # Failset cases
-      failset_cursor = conn.execute("SELECT COUNT(*) as count FROM cases WHERE is_failset = TRUE")
-      failset_cases = failset_cursor.fetchone()['count']
+      cursor = conn.execute("SELECT COUNT(*) FROM training_sessions")
+      sessions = cursor.fetchone()[0]
       
-      # Average confidence
-      avg_cursor = conn.execute("SELECT AVG(confidence) as avg_conf FROM cases")
-      avg_confidence = avg_cursor.fetchone()['avg_conf'] or 0.0
+      return {"total": total, "failset": failset, "training_sessions": sessions}
+  
+  def insert_training_session(self, session_id: str, data_folder: str, checkpoint_folder: str,
+                            network: Optional[str] = None, backup_folder: Optional[str] = None,
+                            chars_count: int = 0) -> int:
+    """Insert a new training session"""
+    with sqlite3.connect(self.db_path) as conn:
+      cursor = conn.execute("""
+        INSERT INTO training_sessions (session_id, data_folder, checkpoint_folder, network, backup_folder, chars_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      """, (session_id, data_folder, checkpoint_folder, network, backup_folder, chars_count))
+      conn.commit()
+      return cursor.lastrowid
+  
+  def update_training_session(self, session_id: str, status: str, model_folder: Optional[str] = None,
+                            error_message: Optional[str] = None):
+    """Update training session status"""
+    with sqlite3.connect(self.db_path) as conn:
+      if status == 'completed':
+        conn.execute("""
+          UPDATE training_sessions 
+          SET status = ?, model_folder = ?, completed_at = CURRENT_TIMESTAMP 
+          WHERE session_id = ?
+        """, (status, model_folder, session_id))
+      elif status == 'failed':
+        conn.execute("""
+          UPDATE training_sessions 
+          SET status = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP 
+          WHERE session_id = ?
+        """, (status, error_message, session_id))
+      else:
+        conn.execute("""
+          UPDATE training_sessions 
+          SET status = ? 
+          WHERE session_id = ?
+        """, (status, session_id))
+      conn.commit()
+  
+  def get_training_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
+    """Get recent training sessions"""
+    with sqlite3.connect(self.db_path) as conn:
+      cursor = conn.execute("""
+        SELECT * FROM training_sessions 
+        ORDER BY started_at DESC 
+        LIMIT ?
+      """, (limit,))
       
-      # Recent activity (last hour)
-      recent_cursor = conn.execute("""
-        SELECT COUNT(*) as count FROM cases 
-        WHERE timestamp > datetime('now', '-1 hour')
-      """)
-      recent_activity = recent_cursor.fetchone()['count']
-      
-      # Failset ratio
-      failset_ratio = (failset_cases / total_cases * 100) if total_cases > 0 else 0.0
-      
-      return {
-        'total_cases': total_cases,
-        'failset_cases': failset_cases,
-        'avg_confidence': avg_confidence,
-        'recent_activity': recent_activity,
-        'failset_ratio': failset_ratio
-      }
+      columns = [desc[0] for desc in cursor.description]
+      return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
   def reset_database(self):
     """Reset database by dropping and recreating tables instead of deleting file"""
@@ -373,4 +436,16 @@ def delete_case_by_img_path(img_path: str):
     return db.delete_case_by_img_path(img_path)
 
 def get_statistics():
-    return db.get_statistics()
+  return db.get_statistics()
+
+def insert_training_session(session_id: str, data_folder: str, checkpoint_folder: str,
+                          network: Optional[str] = None, backup_folder: Optional[str] = None,
+                          chars_count: int = 0) -> int:
+  return db.insert_training_session(session_id, data_folder, checkpoint_folder, network, backup_folder, chars_count)
+
+def update_training_session(session_id: str, status: str, model_folder: Optional[str] = None,
+                          error_message: Optional[str] = None):
+  return db.update_training_session(session_id, status, model_folder, error_message)
+
+def get_training_sessions(limit: int = 10) -> List[Dict[str, Any]]:
+  return db.get_training_sessions(limit)

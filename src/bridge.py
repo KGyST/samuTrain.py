@@ -1,10 +1,12 @@
 import os
+import subprocess
 import shutil
 import time
 import numpy as np
 from PIL import Image
 from typing import Tuple
 import sys
+import uuid
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
@@ -20,51 +22,10 @@ try:
 except ImportError:
   LIB_MODE = False
 
-class CalamariLearner:
-  def __init__(self, model_path: str):
-    self.model_path = model_path
-    self.predictor = None
-    print(f"🔧 CalamariLearner LIB_MODE: {LIB_MODE}")
-    if LIB_MODE:
-      try:
-        params = PredictorParams(silent=True)
-        checkpoint_base = self.model_path.replace('.json', '')
-        print(f"🔍 Attempting to load model from: {checkpoint_base}")
-        self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base)
-        print(f"✅ Calamari loaded: {checkpoint_base}")
-      except Exception as e:
-        print(f"⚠️ Load error: {e}")
-        import traceback
-        traceback.print_exc()
-    else:
-      print("❌ Calamari library not available - using fallback")
-
-  def do_predict(self, image_path: str) -> Tuple[str, float]:
-    if not self.predictor: 
-      print(f"❌ No predictor available for {os.path.basename(image_path)}")
-      return "ERROR", 0.0
-    try:
-      img = np.array(Image.open(image_path).convert('L'))
-      for sample in self.predictor.predict_raw([img]):
-        # Use correct Prediction object attributes
-        sentence = sample.outputs.sentence
-        confidence = sample.outputs.avg_char_probability
-        print(f"🔮 Raw prediction for {os.path.basename(image_path)}: '{sentence}' (conf: {confidence:.3f})")
-        return sentence, confidence
-    except Exception as e:
-      print(f"❌ Prediction failed for {os.path.basename(image_path)}: {e}")
-      return "FAIL", 0.0
-
-  def reload_model(self):
-    """Reload the predictor after training"""
-    if LIB_MODE:
-      try:
-        params = PredictorParams(silent=True)
-        checkpoint_base = self.model_path.replace('.json', '')
-        self.predictor = Predictor.from_checkpoint(params, checkpoint=checkpoint_base)
-        print(f"✅ Model reloaded: {checkpoint_base}")
-      except Exception as e:
-        print(f"⚠️ Reload error: {e}")
+# Import database functions for training tracking
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from db import insert_training_session, update_training_session
+from engines.calamari_learner import CalamariLearner
 
 class OCRBridge:
   def __init__(self):
@@ -75,6 +36,83 @@ class OCRBridge:
 
   def predict(self, image_path: str) -> Tuple[str, float]:
     return self.learner.do_predict(image_path)
+
+  def continue_learning(self, data_folder, checkpoint_folder, network=None, backup=True):
+    """Use the library-based continue learning engine with database tracking"""
+    session_id = str(uuid.uuid4())
+    print(f"🎓 Continue learning started on: {data_folder} (session: {session_id[:8]})")
+    
+    # Insert training session into database
+    try:
+      insert_training_session(
+        session_id=session_id,
+        data_folder=data_folder,
+        checkpoint_folder=checkpoint_folder,
+        network=network,
+        backup_folder=None,  # Will be updated after backup
+        chars_count=0  # Will be updated after character collection
+      )
+    except Exception as e:
+      print(f"⚠️ Failed to create training session: {e}")
+    
+    try:
+      result = self.learner.continue_learning(
+        data_folder=data_folder,
+        checkpoint_folder=checkpoint_folder,
+        network=network,
+        backup=backup
+      )
+      
+      if result["success"]:
+        print("✅ Continue learning completed successfully")
+        print(f"New model location: {result.get('model_dir')}")
+        if result.get('backup_dir'):
+          print(f"Model backup: {result['backup_dir']}")
+        print(f"Network: {result.get('network')}")
+        print(f"Characters learned: {result.get('chars_count', 0)}")
+        
+        # Update database with success
+        try:
+          update_training_session(
+            session_id=session_id,
+            status='completed',
+            model_folder=result.get('model_dir')
+          )
+        except Exception as e:
+          print(f"⚠️ Failed to update training session: {e}")
+        
+        # Reload model after training
+        self.learner.reload_model()
+        return True
+      else:
+        print(f"❌ Continue learning failed: {result.get('error')}")
+        
+        # Update database with failure
+        try:
+          update_training_session(
+            session_id=session_id,
+            status='failed',
+            error_message=result.get('error')
+          )
+        except Exception as e:
+          print(f"⚠️ Failed to update training session: {e}")
+        
+        return False
+        
+    except Exception as e:
+      print(f"❌ Continue learning error: {e}")
+      
+      # Update database with error
+      try:
+        update_training_session(
+          session_id=session_id,
+          status='failed',
+          error_message=str(e)
+        )
+      except Exception as db_e:
+        print(f"⚠️ Failed to update training session: {db_e}")
+      
+      return False
 
   def train_on_failset(self, failset_dir):
     """Uses Calamari library to train/upgrade the model safely"""

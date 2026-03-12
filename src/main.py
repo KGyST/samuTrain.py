@@ -76,7 +76,10 @@ def active_evaluation_loop():
       case = get_random_case(weighted=True)
       if case and case.get('gt_text'):
         # Get full path for prediction
-        img_path = os.path.join(DATA_FOLDER, case['img_path'])
+        # case['img_path'] already contains the relative path from the data parent folder
+        # So we need to join with the parent data folder, not the specific data folder
+        parent_data_dir = os.path.dirname(DATA_FOLDER)  # Get 'data' from 'data/single_case'
+        img_path = os.path.join(parent_data_dir, case['img_path'])
         pred, conf = ocr_bridge.predict(img_path)
 
         # Update database with new prediction
@@ -100,7 +103,7 @@ def active_evaluation_loop():
     time.sleep(evaluation_interval)
 
 def shutdown_training():
-  """Train model on failset cases during shutdown"""
+  """Train model on failset cases during shutdown with graceful checkpoint saving"""
   print("\n🔄 Starting shutdown training...")
   
   try:
@@ -129,7 +132,14 @@ def shutdown_training():
             f.write(case['gt_text'])
       
       print(f"🎯 Training on {len(failset_cases)} cases...")
-      success = ocr_bridge.train_on_failset(train_dir)
+      
+      # Use continue learning for better codec extension and network handling
+      success = ocr_bridge.continue_learning(
+        data_folder=train_dir,
+        checkpoint_folder=ocr_bridge.model_dir,
+        network=None,  # Auto-detect based on data
+        backup=False   # Don't backup during shutdown
+      )
       
       if success:
         print("✅ Model updated successfully")
@@ -213,6 +223,37 @@ async def trigger_training(request: Request):
 async def get_status():
   return {"bridge": ocr_bridge.get_learner_info(), "model": ocr_bridge.model_path}
 
+@app.post("/api/continue_learning")
+async def continue_learning(request: Request):
+  """Continue learning with new data using the consolidated script"""
+  try:
+    data = await request.json()
+    data_folder = data.get('data_folder')
+    checkpoint_folder = data.get('checkpoint_folder', ocr_bridge.model_dir)
+    network = data.get('network')
+    backup = data.get('backup', True)
+    
+    if not data_folder:
+      return {"success": False, "detail": "data_folder is required"}
+    
+    if not os.path.exists(data_folder):
+      return {"success": False, "detail": f"Data folder not found: {data_folder}"}
+    
+    if not os.path.exists(checkpoint_folder):
+      return {"success": False, "detail": f"Checkpoint folder not found: {checkpoint_folder}"}
+    
+    success = ocr_bridge.continue_learning(
+      data_folder=data_folder,
+      checkpoint_folder=checkpoint_folder,
+      network=network,
+      backup=backup
+    )
+    
+    return {"success": success}
+  except Exception as e:
+    print(f"❌ Continue learning API error: {e}")
+    return {"success": False, "detail": str(e)}
+
 @app.post("/api/model/reload")
 async def reload_model():
   """Force reload the model - useful after manual training"""
@@ -247,7 +288,9 @@ if os.path.exists(STATIC_DIR):
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
   # 2. A statikus fájlok (JS, CSS) elérése (/static/main.js stb.)
-  app.mount("/static", StaticFiles(directory=DATA_FOLDER), name="static")
+  # Mount the parent data directory to serve all subfolders (64_case, new_case, single_case, etc.)
+  parent_data_dir = os.path.dirname(DATA_FOLDER)  # Get 'data' from 'data/single_case'
+  app.mount("/static", StaticFiles(directory=parent_data_dir), name="static")
 
   # 3. "Mentőöv" útvonal: ha a böngésző frissítéskor eltévedne
   @app.get("/{full_path:path}")

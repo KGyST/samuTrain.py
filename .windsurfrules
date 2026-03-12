@@ -18,6 +18,7 @@
 ## Environment & Shell (Critical)
 - **PowerShell 5.1 Only:** NEVER use `&&` or `||` in terminal commands. Use `;` for sequencing or run commands separately.
 - **Editable Libs:** Always use `pip install -e lib/calamari` if Calamari dependencies are missing.
+- **Python Version:** Always use Python 3.10.14 (Virtual Environment is in `venv_310` folder) for terminal commands.
 - **Environment:** The project now uses an editable install of Calamari. Any changes in lib/calamari will take effect immediately. Do not attempt to re-install from PyPI.
 
 ## Coding Standards
@@ -37,7 +38,7 @@
 - **Static Assets:** The backend mounts `data/` to `/static`. Ensure the API returns `/static/filename.png` for UI compatibility.
 
 ## Calamari CLI Parameters
-- **Reference:** See `.windsurf/skills/calamari_params.md` for complete PAIArgumentParser documentation.
+- **Reference:** See `.windsurf/skills/calamari-expert/SKILL.md` for complete PAIArgumentParser documentation.
 - **Parameter Structure:** Use flattened arguments for predict.py (`--checkpoint`) vs nested for train.py (`--trainer.checkpoint`).
 - **Avoid UnknownArgumentError:** Always check `flat=True/False` mode before constructing argument lists.
 
