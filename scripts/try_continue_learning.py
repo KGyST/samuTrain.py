@@ -7,7 +7,6 @@ import subprocess
 import json
 import shutil
 import signal
-import time
 import argparse
 from datetime import datetime
 
@@ -31,39 +30,6 @@ if sys.platform == "win32":
 # Global variables for graceful shutdown
 training_process = None
 model_dir = None
-
-def purge_checkpoint_folder(model_dir):
-  """Remove large checkpoint files to save space after backup"""
-  if not os.path.exists(model_dir):
-    return
-  
-  # Files and directories to remove (checkpoint files are typically large)
-  items_to_remove = []
-  
-  # Remove checkpoint directories (these are usually the largest)
-  for item in os.listdir(model_dir):
-    item_path = os.path.join(model_dir, item)
-    if os.path.isdir(item_path) and (item.startswith('checkpoint_') or item.startswith('ckpt-')):
-      items_to_remove.append(item_path)
-    elif os.path.isfile(item_path) and (item.startswith('checkpoint_') or item.endswith('.ckpt.index') or item.endswith('.ckpt.data-')):
-      items_to_remove.append(item_path)
-  
-  # Remove the items
-  removed_count = 0
-  for item_path in items_to_remove:
-    try:
-      if os.path.isdir(item_path):
-        shutil.rmtree(item_path)
-        print(f"Removed checkpoint directory: {os.path.basename(item_path)}")
-      else:
-        os.remove(item_path)
-        print(f"Removed checkpoint file: {os.path.basename(item_path)}")
-      removed_count += 1
-    except Exception as e:
-      print(f"Warning: Could not remove {os.path.basename(item_path)}: {e}")
-  
-  if removed_count > 0:
-    print(f"Purged {removed_count} checkpoint items from backup to save space")
 
 def clean_unicode_text(text):
   """Remove or replace invisible Unicode control characters for better display"""
@@ -157,12 +123,6 @@ def get_current_network(checkpoint_folder):
     return params.get("network", "cnn=8:3x3,pool=2x2,lstm=32")
   except:
     return "cnn=8:3x3,pool=2x2,lstm=32"
-
-def should_resize_network(current_network, new_chars_count):
-  """Determine if network needs resizing based on character count"""
-  # For continue learning, keep the same network architecture to avoid warmstart issues
-  # Only resize if absolutely necessary and user explicitly requests it
-  return current_network
 
 def signal_handler(signum, frame):
   """Handle Ctrl+C gracefully and save best model"""
@@ -270,15 +230,8 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
   # Determine network architecture
   if network is None:
     current_network = get_current_network(checkpoint_folder)
-    # Network resize is not needed if new characters are already included
-    if any(c in current_network for c in chars):
-      network = current_network
-    else:
-      network = should_resize_network(current_network, len(chars))
-    if network != current_network:
-      print(f"Network resized: {current_network} -> {network}")
-    else:
-      print(f"Using current network: {network}")
+    network = current_network
+    print(f"Using current network: {network}")
   else:
     print(f"Using specified network: {network}")
   
