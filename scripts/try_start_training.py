@@ -185,47 +185,70 @@ def main():
   signal.signal(signal.SIGINT, signal_handler)
   signal.signal(signal.SIGTERM, signal_handler)
   
-  parser = argparse.ArgumentParser(description="Start training from scratch, then optionally continue")
-  parser.add_argument("initial_data", help="Path to initial training images (*.bin.png)")
-  parser.add_argument("--continue-data", help="Path to additional data for continuation (*.bin.png)")
-  parser.add_argument("--epochs", type=int, default=5, help="Initial training epochs")
-  parser.add_argument("--output", default="models/new_model", help="Model output directory")
-  parser.add_argument("--network", default="cnn=40:3x3,pool=2x2,lstm=100,dropout=0.5", help="Network architecture")
-  parser.add_argument("--auto-continue", action="store_true", help="Automatically continue if continue-data provided")
+  parser = argparse.ArgumentParser(description="Train or continue OCR model")
+  parser.add_argument("data_folder", help="Path to training data folder")
+  parser.add_argument("model_folder", help="Path to model folder (existing for continuation, new for --new)")
+  parser.add_argument("--new", action="store_true", help="Create new model (model_folder must not exist)")
+  parser.add_argument("--epochs", type=int, default=5, help="Training epochs for new model")
+  parser.add_argument("--network", default="cnn=8:3x3,pool=2x2,lstm=32", help="Network architecture")
+  parser.add_argument("--auto-continue", action="store_true", help="Automatically continue with same data after initial training")
   parser.add_argument("--force", action="store_true", help="Force overwrite existing model directory without prompt")
   
   args = parser.parse_args()
   
-  # Normalize data paths
-  args.initial_data = normalize_data_path(args.initial_data)
-  if args.continue_data:
-    args.continue_data = normalize_data_path(args.continue_data)
+  # Normalize data path
+  data_path = normalize_data_path(args.data_folder)
   
-  # Verify initial dataset
-  if not verify_dataset(args.initial_data):
+  # Verify dataset
+  if not verify_dataset(data_path):
     sys.exit(1)
   
-  # Start initial training
-  if not start_initial_training(args.initial_data, args.epochs, args.output, args.network):
-    print("❌ Initial training failed, cannot continue")
+  # Check model folder existence
+  model_exists = os.path.exists(args.model_folder)
+  
+  # Validate arguments
+  if args.new and model_exists:
+    if not args.force:
+      print(f"❌ Model folder already exists: {args.model_folder}")
+      print(f"   Use --force to overwrite or choose a different folder")
+      sys.exit(1)
+    shutil.rmtree(args.model_folder)
+    print(f"🗑️ Removed existing model folder: {args.model_folder}")
+    model_exists = False
+  
+  if not args.new and not model_exists:
+    print(f"❌ Model folder does not exist: {args.model_folder}")
+    print(f"   Use --new to create a new model or provide an existing model folder")
     sys.exit(1)
   
-  # Handle continuation
-  if args.continue_data:
+  # Handle new model creation
+  if args.new:
+    print(f"🆕 Creating new model: {args.model_folder}")
+    if not start_initial_training(data_path, args.epochs, args.model_folder, args.network):
+      print("❌ Initial training failed")
+      sys.exit(1)
+    
+    # Handle auto-continuation for new models
     if args.auto_continue:
       print("\n🤖 Auto-continuation enabled, proceeding...")
-      success = continue_training_with_script(args.output, args.continue_data, args.network)
+      success = continue_training_with_script(args.model_folder, data_path, args.network)
       if success:
-        print(f"\n🎉 Complete training workflow finished! Model: {args.output}")
+        print(f"\n🎉 Complete training workflow finished! Model: {args.model_folder}")
       else:
         print("❌ Continuation failed")
         sys.exit(1)
     else:
-      print(f"\n📝 Initial training complete! Model saved to: {args.output}")
-      print(f"💡 To continue training with additional data, run:")
-      print(f"   python scripts/try_continue_learning.py {args.continue_data} {args.output}")
+      print(f"\n🎉 New model created! Model saved to: {args.model_folder}")
+  
+  # Handle model continuation
   else:
-    print(f"\n🎉 Training completed! Model saved to: {args.output}")
+    print(f"� Continuing training on existing model: {args.model_folder}")
+    success = continue_training_with_script(args.model_folder, data_path, args.network)
+    if success:
+      print(f"\n🎉 Model continuation finished! Model: {args.model_folder}")
+    else:
+      print("❌ Continuation failed")
+      sys.exit(1)
 
 if __name__ == "__main__":
   main()
