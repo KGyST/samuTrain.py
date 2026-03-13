@@ -1,5 +1,5 @@
-# What is this file for: Start training from scratch, then optionally continue training
-# When it is created: 2026-03-13 (combines train.py and try_continue_learning.py)
+# What is this file for: Unified training script that starts from scratch or continues existing models
+# When it is created: 2026-03-13 (consolidated from train.py and try_continue_learning.py)
 
 import os
 import sys
@@ -9,6 +9,10 @@ import argparse
 import glob
 import signal
 from datetime import datetime
+
+# Import get_current_network from try_continue_learning
+sys.path.append(os.path.dirname(__file__))
+from try_continue_learning import get_current_network
 
 # Add src/ and project root to sys.path
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -78,6 +82,16 @@ def verify_dataset(data_pattern):
       return False
   return True
 
+def get_last_checkpoint_folder(model_folder: str) -> [str, None]:
+  assert os.path.exists(model_folder), f"Model folder does not exist: {model_folder}"
+  assert os.path.isdir(model_folder), f"Model folder is not a directory: {model_folder}"
+  assert os.path.exists(os.path.join(model_folder, "checkpoint")), f"Checkpoint folder does not exist: {os.path.join(model_folder, 'checkpoint_')}"
+
+  checkpoint_folders = glob.glob(os.path.join(model_folder, "checkpoint", "checkpoint_*"))
+  if not checkpoint_folders:
+    return None
+  return max(checkpoint_folders, key=os.path.getmtime)
+
 def start_initial_training(data_pattern, epochs, output_dir, network):
   """Start training from scratch using train.py logic"""
   global training_process
@@ -134,6 +148,14 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
 
 def continue_training_with_script(model_dir, continue_data, network):
   """Continue training using try_continue_learning.py"""
+
+  if not network:
+    last_ckpt_folder = get_last_checkpoint_folder(model_dir)
+    trainer_params_json = os.path.join(last_ckpt_folder, "trainer_params.json")
+    with open(trainer_params_json, 'r') as f:
+      params = json.load(f)
+    network = params["network"]
+  
   print(f"\n🔄 Continuing training with additional data...")
   print(f"📁 Model: {model_dir}")
   print(f"📊 Continue data: {continue_data}")
@@ -156,29 +178,8 @@ def continue_training_with_script(model_dir, continue_data, network):
     except Exception as e:
       print(f"⚠️ Could not update trainer_params.json: {e}")
   
-  # Call try_continue_learning.py
-  continue_script = os.path.join(script_dir, "try_continue_learning.py")
-  # Extract folder path from glob pattern for continuation script
-  if "*" in continue_data:
-    continue_folder = continue_data.replace("*.bin.png", "").rstrip("/\\")
-  else:
-    continue_folder = continue_data
-  
-  cmd = [
-    sys.executable, continue_script,
-    continue_folder,
-    model_dir
-  ]
-  
-  print(f"Continue command: {' '.join(cmd)}\n")
-  
-  try:
-    subprocess.run(cmd, check=True)
-    print("✅ Continuation training completed successfully!")
-    return True
-  except subprocess.CalledProcessError as e:
-    print(f"❌ Continuation training failed: {e}")
-    return False
+  from try_continue_learning import continue_learning
+  result_ckpt = continue_learning(continue_data, last_ckpt_folder, network=network)
 
 def main():
   # Set up signal handlers
@@ -190,7 +191,7 @@ def main():
   parser.add_argument("model_folder", help="Path to model folder (existing for continuation, new for --new)")
   parser.add_argument("--new", action="store_true", help="Create new model (model_folder must not exist)")
   parser.add_argument("--epochs", type=int, default=5, help="Training epochs for new model")
-  parser.add_argument("--network", default="cnn=8:3x3,pool=2x2,lstm=32", help="Network architecture")
+  parser.add_argument("--network", default=None, help="Network architecture")
   parser.add_argument("--auto-continue", action="store_true", help="Automatically continue with same data after initial training")
   parser.add_argument("--force", action="store_true", help="Force overwrite existing model directory without prompt")
   
@@ -242,8 +243,9 @@ def main():
   
   # Handle model continuation
   else:
-    print(f"� Continuing training on existing model: {args.model_folder}")
-    success = continue_training_with_script(args.model_folder, data_path, args.network)
+    print(f"🔄 Continuing training on existing model: {args.model_folder}")
+
+    success = continue_training_with_script(args.model_folder, args.data_folder, args.network)
     if success:
       print(f"\n🎉 Model continuation finished! Model: {args.model_folder}")
     else:

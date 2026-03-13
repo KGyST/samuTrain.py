@@ -31,6 +31,32 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
             }
+        },
+        {
+            "name": "Debug try_start_training (Continue)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/try_start_training.py",
+            "args": ["data/64_case", "models/generic_ocr_model"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/venv_310/Scripts/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Debug try_start_training (New)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/try_start_training.py",
+            "args": ["data/single_case", "models/debug_test", "--new", "--epochs", "1"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/venv_310/Scripts/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
+            }
         }
     ]
 }

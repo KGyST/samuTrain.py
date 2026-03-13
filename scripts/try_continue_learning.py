@@ -116,7 +116,6 @@ def get_current_network(checkpoint_folder):
   params_path = os.path.join(checkpoint_folder, "trainer_params.json")
   if not os.path.exists(params_path):
     return "cnn=8:3x3,pool=2x2,lstm=32"  # Default network
-  
   try:
     with open(params_path, 'r') as f:
       params = json.load(f)
@@ -183,8 +182,8 @@ def copy_essential_files(backup_dir, target_dir):
 
 def continue_learning(data_folder, checkpoint_folder, network=None, backup=True):
   """Continue learning with codec extension, network resizing, and graceful shutdown"""
-  global model_dir
-  model_dir = checkpoint_folder
+  model_dir = os.path.join(checkpoint_folder, os.pardir, os.pardir)
+  model_path = os.path.abspath(model_dir)
 
   # Validate inputs
   if not os.path.exists(data_folder):
@@ -196,7 +195,7 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
   # Pre-training backup: rename original folder to .old
   backup_dir = None
   if backup:
-    backup_dir = backup_model(checkpoint_folder)
+    backup_dir = backup_model(model_path)
     if backup_dir is None:
       print("Warning: Backup failed, proceeding without backup")
     else:
@@ -227,9 +226,6 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
   if not os.path.exists(checkpoint_file):
     raise FileNotFoundError(f"Checkpoint not found in: {checkpoint_folder}")
 
-  # Train to new folder
-  new_model_dir = checkpoint_folder
-  
   # Collect characters and determine network architecture
   chars = collect_chars(data_folder)
   print(f"Characters in new data: {''.join(chars)}")
@@ -256,7 +252,7 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
     sys.executable, "-m", "calamari_ocr.scripts.train",
     "--warmstart.model", checkpoint_file,
     "--trainer.auto_upgrade_checkpoints", "True",
-    "--trainer.output_dir", new_model_dir,
+    "--trainer.output_dir", model_dir,
     "--train.images", os.path.join(data_folder, "*.bin.png"),
     "--train.skip_invalid", "True",
     "--train.batch_size", "1",  # Use batch size 1 for small datasets
@@ -275,7 +271,7 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
   
   print(f"Training command:")
   print(" ".join(f'"{arg}"' if " " in arg else arg for arg in cmd))
-  print(f"New model will be created in: {new_model_dir}")
+  print(f"New model will be created in: {model_dir}")
   
   global training_process
   
@@ -286,6 +282,8 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
       stdout=subprocess.PIPE,
       stderr=subprocess.STDOUT,
       text=True,
+      encoding='utf-8',
+      errors='replace',
       universal_newlines=True,
       bufsize=1
     )
@@ -342,7 +340,7 @@ if __name__ == "__main__":
     result = continue_learning(
       args.data_folder, 
       args.checkpoint_folder, 
-      network=args.network,
+      network=args.network if args.network else None,
       backup=not args.no_backup
     )
     print(f"\nContinue learning completed! Model replaced at original location: {args.checkpoint_folder}")
