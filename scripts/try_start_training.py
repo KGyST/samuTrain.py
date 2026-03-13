@@ -3,6 +3,7 @@
 
 import os
 import sys
+import json
 import subprocess
 import argparse
 import glob
@@ -131,21 +132,41 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
   finally:
     training_process = None
 
-def continue_training_with_script(model_dir, continue_data):
+def continue_training_with_script(model_dir, continue_data, network):
   """Continue training using try_continue_learning.py"""
   print(f"\n🔄 Continuing training with additional data...")
   print(f"📁 Model: {model_dir}")
   print(f"📊 Continue data: {continue_data}")
+  print(f"🧠 Network: {network}")
   
   if not verify_dataset(continue_data):
     print("❌ Continue data verification failed")
     return False
   
+  # Update trainer_params.json with the correct network
+  params_file = os.path.join(model_dir, "trainer_params.json")
+  if os.path.exists(params_file):
+    try:
+      with open(params_file, 'r') as f:
+        params = json.load(f)
+      params["network"] = network
+      with open(params_file, 'w') as f:
+        json.dump(params, f, indent=2)
+      print(f"✅ Updated network in trainer_params.json: {network}")
+    except Exception as e:
+      print(f"⚠️ Could not update trainer_params.json: {e}")
+  
   # Call try_continue_learning.py
   continue_script = os.path.join(script_dir, "try_continue_learning.py")
+  # Extract folder path from glob pattern for continuation script
+  if "*" in continue_data:
+    continue_folder = continue_data.replace("*.bin.png", "").rstrip("/\\")
+  else:
+    continue_folder = continue_data
+  
   cmd = [
     sys.executable, continue_script,
-    continue_data,
+    continue_folder,
     model_dir
   ]
   
@@ -171,6 +192,7 @@ def main():
   parser.add_argument("--output", default="models/new_model", help="Model output directory")
   parser.add_argument("--network", default="cnn=40:3x3,pool=2x2,lstm=100,dropout=0.5", help="Network architecture")
   parser.add_argument("--auto-continue", action="store_true", help="Automatically continue if continue-data provided")
+  parser.add_argument("--force", action="store_true", help="Force overwrite existing model directory without prompt")
   
   args = parser.parse_args()
   
@@ -192,7 +214,7 @@ def main():
   if args.continue_data:
     if args.auto_continue:
       print("\n🤖 Auto-continuation enabled, proceeding...")
-      success = continue_training_with_script(args.output, args.continue_data)
+      success = continue_training_with_script(args.output, args.continue_data, args.network)
       if success:
         print(f"\n🎉 Complete training workflow finished! Model: {args.output}")
       else:

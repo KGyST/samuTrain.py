@@ -154,38 +154,32 @@ def signal_handler(signum, frame):
   print("Exiting...")
   sys.exit(0)
 
-def copy_essential_files(src_dir, dst_dir, files_to_copy=None):
-  """Copy essential files from backup to new model folder for continuation"""
-  if files_to_copy is None:
-    files_to_copy = [
-      "best.ckpt", "best.ckpt.json", "best.ckpt.data-00000-of-00001", "best.ckpt.index",
-      "trainer_params.json", "extended_charset.txt", "charset.txt"
-    ]
+def copy_essential_files(backup_dir, target_dir):
+  """Copy essential files from backup to new training folder"""
+  essential_files = ["best.ckpt.json", "extended_charset.txt"]
+  essential_dirs = ["best.ckpt"]
   
-  copied_files = []
-  for filename in files_to_copy:
-    src_path = os.path.join(src_dir, filename)
-    dst_path = os.path.join(dst_dir, filename)
-    if os.path.exists(src_path):
-      try:
-        if os.path.isdir(src_path):
-          # Copy directory recursively
-          if os.path.exists(dst_path):
-            shutil.rmtree(dst_path)
-          shutil.copytree(src_path, dst_path)
-          copied_files.append(filename + " (directory)")
-          print(f"Copied essential directory: {filename}")
-        elif os.path.isfile(src_path):
-          shutil.copy2(src_path, dst_path)
-          copied_files.append(filename)
-          print(f"Copied essential file: {filename}")
-      except Exception as e:
-        print(f"Warning: Could not copy {filename}: {e}")
+  copied_count = 0
+  for item in essential_files:
+    src = os.path.join(backup_dir, item)
+    dst = os.path.join(target_dir, item)
+    if os.path.exists(src):
+      shutil.copy2(src, dst)
+      print(f"Copied essential file: {item}")
+      copied_count += 1
   
-  if copied_files:
-    print(f"Copied {len(copied_files)} essential files/directories for model continuation")
-  else:
-    print("Warning: No essential files found to copy")
+  for item in essential_dirs:
+    src = os.path.join(backup_dir, item)
+    dst = os.path.join(target_dir, item)
+    if os.path.exists(src):
+      if os.path.exists(dst):
+        shutil.rmtree(dst)
+      shutil.copytree(src, dst)
+      print(f"Copied essential directory: {item}")
+      copied_count += 1
+  
+  print(f"Copied {copied_count} essential files/directories for model continuation")
+  return copied_count > 0
 
 def continue_learning(data_folder, checkpoint_folder, network=None, backup=True):
   """Continue learning with codec extension, network resizing, and graceful shutdown"""
@@ -210,6 +204,20 @@ def continue_learning(data_folder, checkpoint_folder, network=None, backup=True)
       os.makedirs(checkpoint_folder)
       # Copy essential files from backup to new folder
       copy_essential_files(backup_dir, checkpoint_folder)
+      
+      # Update trainer_params.json with the correct network if specified
+      if network:
+        params_file = os.path.join(checkpoint_folder, "trainer_params.json")
+        if os.path.exists(params_file):
+          try:
+            with open(params_file, 'r') as f:
+              params = json.load(f)
+            params["network"] = network
+            with open(params_file, 'w') as f:
+              json.dump(params, f, indent=2)
+            print(f"✅ Updated network in trainer_params.json: {network}")
+          except Exception as e:
+            print(f"⚠️ Could not update trainer_params.json: {e}")
 
   # Find checkpoint file in original directory first
   checkpoint_file = os.path.join(checkpoint_folder, "best.ckpt")
