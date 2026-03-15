@@ -31,7 +31,7 @@ if sys.platform == "win32":
 training_process = None
 model_dir = None
 
-def clean_unicode_text(text):
+def clean_unicode_text(text: str) -> str:
   """Remove or replace invisible Unicode control characters for better display"""
   if not text:
     return text
