@@ -4,6 +4,12 @@
 import os, sys, json, subprocess, argparse, glob, shutil, signal, codecs, uuid
 from datetime import datetime
 
+from numpy.ma.core import bool_
+
+UTF_8 = 'utf-8'
+TRAINER_PARAMS = "trainer_params.json"
+BEST_CKPT = "best.ckpt.json"
+
 # Add src/ and project root to sys.path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
@@ -22,7 +28,7 @@ os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 # Set UTF-8 encoding for stdout to handle emoji characters
 if sys.platform == "win32":
   import codecs
-  sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+  sys.stdout = codecs.getwriter(UTF_8)(sys.stdout.detach())
 
 # Global variables for graceful shutdown
 training_process = None
@@ -55,42 +61,27 @@ def clean_unicode_text(text: str) -> str:
   # Handle both actual Unicode characters and their escaped representations
   replacements = {
     # Actual Unicode characters
-    '\u200b': '',  # Zero Width Space
-    '\u200c': '',  # Zero Width Non-Joiner
-    '\u200d': '',  # Zero Width Joiner
-    '\u200e': '',  # Left-to-Right Mark
-    '\u200f': '',  # Right-to-Left Mark
+    # '\u200b': '',  # Zero Width Space
+    # '\u200c': '',  # Zero Width Non-Joiner
+    # '\u200d': '',  # Zero Width Joiner
+    # '\u200e': '',  # Left-to-Right Mark
+    # '\u200f': '',  # Right-to-Left Mark
     '\u202a': '[LTR]',  # Left-to-Right Embedding
     '\u202b': '[RTL]',  # Right-to-Left Embedding
     '\u202c': '[PDF]',  # Pop Directional Formatting
     '\u202d': '[LRO]',  # Left-to-Right Override
     '\u202e': '[RLO]',  # Right-to-Left Override
-    '\u2060': '',  # Word Joiner
-    '\u2061': '',  # Function Application
-    '\u2062': '',  # Invisible Separator
-    '\u2063': '',  # Invisible Plus
-    '\u2064': '',  # Invisible Times
-    '\ufeff': '',  # Zero Width No-Break Space (BOM)
-    '\ufffd': '',  # Replacement Character (�) - remove corrupted characters
-    
-    # Escaped string representations
-    '\\u200b': '',  # Zero Width Space
-    '\\u200c': '',  # Zero Width Non-Joiner
-    '\\u200d': '',  # Zero Width Joiner
-    '\\u200e': '',  # Left-to-Right Mark
-    '\\u200f': '',  # Right-to-Left Mark
-    '\\u202a': '[LTR]',  # Left-to-Right Embedding
-    '\\u202b': '[RTL]',  # Right-to-Left Embedding
-    '\\u202c': '[PDF]',  # Pop Directional Formatting
-    '\\u202d': '[LRO]',  # Left-to-Right Override
-    '\\u202e': '[RLO]',  # Right-to-Left Override
-    '\\u2060': '',  # Word Joiner
-    '\\u2061': '',  # Function Application
-    '\\u2062': '',  # Invisible Separator
-    '\\u2063': '',  # Invisible Plus
-    '\\u2064': '',  # Invisible Times
-    '\\ufeff': '',  # Zero Width No-Break Space (BOM)
-    '\\ufffd': '',  # Replacement Character (�) - remove corrupted characters
+    # '\u2060': '',  # Word Joiner
+    # '\u2061': '',  # Function Application
+    # '\u2062': '',  # Invisible Separator
+    # '\u2063': '',  # Invisible Plus
+    # '\u2064': '',  # Invisible Times
+    # '\ufeff': '',  # Zero Width No-Break Space (BOM)
+  }
+
+  replacements = {
+    **replacements,
+    **{f'{repr(r)[1:-1]}': s for r, s in replacements.items()}
   }
   
   # Replace control characters with readable alternatives or remove them
@@ -100,26 +91,28 @@ def clean_unicode_text(text: str) -> str:
   
   return cleaned
 
-def collect_chars(data_folder):
+def collect_chars(data_folder: str):
   chars = set()
   for root, dirs, files in os.walk(data_folder):
     for file in files:
       if file.endswith('.gt.txt'):
         gt_file = os.path.join(root, file)
         try:
-          with open(gt_file, 'r', encoding='utf-8') as f:
+          with open(gt_file, 'r', encoding=UTF_8) as f:
             chars.update(f.read())
         except:
           pass
   return sorted(list(chars))
 
-def backup_model(model_dir):
+def backup_model(model_dir: str) -> None | str:
   """Backup model directory by renaming to .old format"""
-  if not os.path.exists(model_dir):
-    return None
   
+  assert os.path.isdir(model_dir)
+
   timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
   backup_dir = f"{model_dir}.{timestamp}.old"
+
+  assert not os.path.exists(backup_dir)
   
   try:
     shutil.move(model_dir, backup_dir)
@@ -129,19 +122,30 @@ def backup_model(model_dir):
     print(f"Warning: Could not backup model: {e}")
     return None
 
-def get_current_network(checkpoint_folder):
+def get_current_network(model_dir: str) -> None | str:
   """Extract current network architecture from trainer params"""
-  params_path = os.path.join(checkpoint_folder, "trainer_params.json")
-  if not os.path.exists(params_path):
-    return "cnn=8:3x3,pool=2x2,lstm=32"  # Default network
-  try:
-    with open(params_path, 'r') as f:
-      params = json.load(f)
-    return params.get("network", "cnn=8:3x3,pool=2x2,lstm=32")
-  except:
-    return "cnn=8:3x3,pool=2x2,lstm=32"
+  
+  assert os.path.isdir(model_dir)
 
-def signal_handler(signum, frame):
+  try:
+    with open(os.path.join(model_dir, TRAINER_PARAMS), 'r') as f:
+      params = json.load(f)
+    if network := params["network"]:
+      return network
+  except:
+    pass
+
+  try:
+    with open(os.path.join(get_last_valid_checkpoint(model_dir), TRAINER_PARAMS), 'r') as f:
+      params = json.load(f)
+    if network := params["network"]:
+      return network
+  except:
+    pass
+
+  return None
+
+def signal_handler(signum):
   """Handle Ctrl+C gracefully and save best model"""
   global training_process, model_dir
   print(f"\nReceived signal {signum}. Saving best model before shutdown...")
@@ -171,7 +175,6 @@ def signal_handler(signum, frame):
   print("Exiting...")
   sys.exit(0)
 
-
 def verify_dataset(data_pattern):
   """Verify that dataset exists."""
   images = glob.glob(data_pattern)
@@ -186,60 +189,22 @@ def verify_dataset(data_pattern):
       return False
   return True
 
-def validate_checkpoint(checkpoint_folder, required_files=None, required_dirs=None, optional_files=None, optional_dirs=None):
+def validate_checkpoint(checkpoint_folder, required_files=None) -> bool:
   """Validate that checkpoint has all required and optional files/directories, returning detailed info"""
   if required_files is None:
-    required_files = ["best.ckpt.json", "trainer_params.json"]
-  if required_dirs is None:
-    required_dirs = ["best.ckpt"]
-  if optional_files is None:
-    optional_files = []
-  if optional_dirs is None:
-    optional_dirs = []
+    required_files = [TRAINER_PARAMS]
 
   missing_required_files = []
   missing_required_dirs = []
-  present_required_files = []
-  present_required_dirs = []
-  present_optional_files = []
-  present_optional_dirs = []
-  missing_optional_files = []
-  missing_optional_dirs = []
 
   for file in required_files:
     path = os.path.join(checkpoint_folder, file)
-    if os.path.exists(path) and os.path.isfile(path):
-      present_required_files.append(file)
-    else:
+    if not os.path.exists(path) or not os.path.isfile(path):
       missing_required_files.append(file)
-
-  for dir_name in required_dirs:
-    path = os.path.join(checkpoint_folder, dir_name)
-    if os.path.exists(path) and os.path.isdir(path):
-      present_required_dirs.append(dir_name)
-    else:
-      missing_required_dirs.append(dir_name)
-
-  for file in optional_files:
-    path = os.path.join(checkpoint_folder, file)
-    if os.path.exists(path) and os.path.isfile(path):
-      present_optional_files.append(file)
-    else:
-      missing_optional_files.append(file)
-
-  for dir_name in optional_dirs:
-    path = os.path.join(checkpoint_folder, dir_name)
-    if os.path.exists(path) and os.path.isdir(path):
-      present_optional_dirs.append(dir_name)
-    else:
-      missing_optional_dirs.append(dir_name)
 
   is_valid = len(missing_required_files) == 0 and len(missing_required_dirs) == 0
 
-  return (is_valid, present_required_files + present_required_dirs,
-          missing_required_files + missing_required_dirs,
-          present_optional_files + present_optional_dirs,
-          missing_optional_files + missing_optional_dirs)
+  return is_valid
 
 def get_last_valid_checkpoint(model_folder: str):
   """Get the last checkpoint folder that has all required files"""
@@ -256,31 +221,40 @@ def get_last_valid_checkpoint(model_folder: str):
 
   # Find the first valid checkpoint (most recent with all required files)
   for ckpt_folder in checkpoint_folders:
-    is_valid, _, _, _, _ = validate_checkpoint(ckpt_folder)
+    
+    is_valid = validate_checkpoint(ckpt_folder)
     if is_valid:
       return ckpt_folder
 
   return None
 
-def get_last_checkpoint_folder(model_folder: str) -> [str, None]:
-  """Legacy function - use get_last_valid_checkpoint instead"""
-  return get_last_valid_checkpoint(model_folder)
-
-def extract_checkpoint_files(checkpoint_folder, target_dir):
+def extract_checkpoint_files(model_dir, target_dir):
   """Extract essential checkpoint files to target directory"""
-  essential_files = ["best.ckpt.json", "trainer_params.json"]
+  
+  essential_files = [BEST_CKPT, TRAINER_PARAMS]
+
+  # Get the last valid checkpoint from the existing model
+  last_checkpoint = get_last_valid_checkpoint(model_dir)
+  if last_checkpoint is None:
+    raise FileNotFoundError(f"No valid checkpoint found in {model_dir}")
   
   extracted_count = 0
   for file in essential_files:
-    src = os.path.join(checkpoint_folder, file)
     dst = os.path.join(target_dir, file)
-    if os.path.exists(src):
+    if os.path.exists(src := os.path.join(last_checkpoint, file)):
+      pass
+    elif os.path.exists(src := os.path.join(model_dir, file)):
+      pass
+    else:
+      src = None
+
+    if src:
       shutil.copy2(src, dst)
       print(f"Extracted checkpoint file: {file}")
       extracted_count += 1
   
   # Copy best.ckpt directory if it exists
-  best_ckpt_src = os.path.join(checkpoint_folder, "best.ckpt")
+  best_ckpt_src = os.path.join(model_dir, "best.ckpt")
   best_ckpt_dst = os.path.join(target_dir, "best.ckpt")
   if os.path.exists(best_ckpt_src):
     if os.path.exists(best_ckpt_dst):
@@ -295,6 +269,8 @@ def extract_checkpoint_files(checkpoint_folder, target_dir):
 def start_initial_training(data_pattern, epochs, output_dir, network):
   """Start training from scratch using train.py logic"""
   global training_process
+  if not network:
+    network = "cnn=8:3x3,pool=2x2,lstm=32"
   
   print("🚀 Starting initial training from scratch...")
   print(f"📊 Data: {data_pattern}")
@@ -348,7 +324,7 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
 
 
 def continue_learning(model_dir, continue_data, network=None, backup=True):
-  """Continue learning with extracted checkpoint files to project root, avoiding fake checkpoint creation"""
+  """Continue learning with proper backup-then-extract sequence"""
 
   # Validate model directory
   if not os.path.exists(model_dir):
@@ -356,30 +332,10 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
   if not os.path.isdir(model_dir):
     raise ValueError(f"Model path is not a directory: {model_dir}")
 
-  # Get the last valid checkpoint
-  last_checkpoint = get_last_valid_checkpoint(model_dir)
-  if last_checkpoint is None:
-    raise FileNotFoundError(f"No valid checkpoint found in {model_dir}")
-
   print(f"🔄 Continuing training with additional data...")
   print(f"📁 Model: {model_dir}")
   print(f"📊 Continue data: {continue_data}")
-  print(f"🔍 Using checkpoint: {last_checkpoint}")
 
-  # Validate checkpoint
-  is_valid, present, missing, _, _ = validate_checkpoint(last_checkpoint)
-  if not is_valid:
-    raise ValueError(f"Invalid checkpoint {last_checkpoint}, missing: {missing}")
-  print(f"✅ Checkpoint validation passed: present files {present}")
-
-  # Extract checkpoint files to project root first (before backup)
-  project_root_dir = os.path.dirname(model_dir)
-  if extract_checkpoint_files(last_checkpoint, project_root_dir):
-    print(f"✅ Extracted checkpoint files to project root: {project_root_dir}")
-  else:
-    raise RuntimeError("Failed to extract checkpoint files")
-
-  # Backup model if requested (this moves the old model_dir to backup)
   backup_dir = None
   if backup:
     backup_dir = backup_model(model_dir)
@@ -388,30 +344,31 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
     else:
       print("⚠️  Backup failed, proceeding without backup")
 
-  # Create the new model directory if it doesn't exist
+  # Step 2: Create new empty model directory
   if not os.path.exists(model_dir):
     os.makedirs(model_dir)
+    print(f"📁 Created new model directory: {model_dir}")
+
+  # Step 3: Extract essential files from backup to new model directory
+  if backup_dir and extract_checkpoint_files(backup_dir, model_dir):
+    print(f"✅ Extracted essential files from backup to new model directory")
+  elif not backup_dir:
+    # If no backup was made, extract from the checkpoint directly
+    if extract_checkpoint_files(last_checkpoint, model_dir):
+      print(f"✅ Extracted essential files to model directory")
+    else:
+      raise RuntimeError("Failed to extract checkpoint files")
+  else:
+    raise RuntimeError("Failed to extract checkpoint files from backup")
 
   # Determine network
   if network is None:
-    network = get_current_network(project_root_dir)
+    network = get_current_network(model_dir)
     print(f"Using existing network: {network}")
   else:
     print(f"Using specified network: {network}")
 
-  # Update trainer_params.json with network if needed
-  params_file = os.path.join(project_root_dir, "trainer_params.json")
-  if os.path.exists(params_file):
-    try:
-      with open(params_file, 'r') as f:
-        params = json.load(f)
-      if params.get("network") != network:
-        params["network"] = network
-        with open(params_file, 'w') as f:
-          json.dump(params, f, indent=2)
-        print(f"✅ Updated network in trainer_params.json: {network}")
-    except Exception as e:
-      print(f"⚠️  Could not update trainer_params.json: {e}")
+  assert network, "Network is None"
 
   # Verify dataset
   data_pattern = normalize_data_path(continue_data)
@@ -425,15 +382,16 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
   # Create extended charset file if new characters found
   charset_file = None
   if chars:
-    charset_file = os.path.join(project_root_dir, "extended_charset.txt")
-    with open(charset_file, 'w', encoding='utf-8') as f:
+    charset_file = os.path.join(model_dir, "extended_charset.txt")
+    with open(charset_file, 'w', encoding=UTF_8) as f:
       f.write(''.join(chars))
     print(f"📝 Extended charset file created: {charset_file}")
 
-  # Build training command using extracted files from project root
-  checkpoint_file = os.path.join(project_root_dir, "best.ckpt")
+  # Build training command using extracted files from model directory
+  checkpoint_file = os.path.join(model_dir, "best.ckpt")
   if not os.path.exists(checkpoint_file):
-    checkpoint_file = os.path.join(project_root_dir, "best.ckpt.json")
+    checkpoint_file = os.path.join(model_dir, TRAINER_PARAMS)
+
 
   cmd = [
     sys.executable, "-m", "calamari_ocr.scripts.train",
@@ -467,7 +425,7 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
       stdout=subprocess.PIPE,
       stderr=subprocess.STDOUT,
       text=True,
-      encoding='utf-8',
+      encoding=UTF_8,
       errors='replace',
       universal_newlines=True,
       bufsize=1

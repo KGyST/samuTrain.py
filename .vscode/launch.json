@@ -37,7 +37,7 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/try_start_training.py",
-            "args": ["data/64_case", "models/generic_ocr_model"],
+            "args": ["data/64_case", "models/generic_ocr_model_2"],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "python": "${workspaceFolder}/venv_310/Scripts/python",
