@@ -31,6 +31,10 @@ if __name__ == "__main__":
                        help="Reset database on startup")
     
     args = parser.parse_args()
+
+    # Ensure UTF-8 output on Windows (avoids UnicodeEncodeError for emoji in db.py)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     
     # Set data folder as environment variable for other modules
     os.environ['SAMUTRAIN_DATA_FOLDER'] = args.data_folder

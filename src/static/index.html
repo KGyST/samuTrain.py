@@ -479,9 +479,9 @@
       return date.toLocaleString();
     }
     
-    function formatImagePath(imagePath) {
-      // Convert local path to display URL
-      return `/static/${imagePath}`;
+    function formatImagePath(imagePath, imgStaticPath) {
+      const path = imgStaticPath || imagePath;
+      return `/static/${path}`;
     }
     
     async function loadStatistics() {
@@ -548,7 +548,7 @@
             const confidenceClass = getConfidenceClass(case_.confidence);
             const confidencePercent = (case_.confidence * 100).toFixed(1);
             const timestamp = formatTimestamp(case_.timestamp);
-            const imageUrl = formatImagePath(case_.img_path);
+            const imageUrl = formatImagePath(case_.img_path, case_.img_static_path);
             
             // Debug logging
             console.log('Processing case:', {

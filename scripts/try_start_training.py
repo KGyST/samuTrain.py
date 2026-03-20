@@ -6,6 +6,7 @@ from datetime import datetime
 
 from numpy.ma.core import bool_
 
+
 UTF_8 = 'utf-8'
 TRAINER_PARAMS = "trainer_params.json"
 BEST_CKPT = "best.ckpt.json"
@@ -35,7 +36,6 @@ training_process = None
 model_dir = None
 
 def normalize_data_path(data_path):
-  """Convert folder paths to glob patterns if needed."""
   # If already contains glob pattern or .bin.png, return as-is
   if "*" in data_path or data_path.endswith(".bin.png"):
     return data_path
@@ -149,9 +149,7 @@ def signal_handler(signum):
   """Handle Ctrl+C gracefully and save best model"""
   global training_process, model_dir
   print(f"\nReceived signal {signum}. Saving best model before shutdown...")
-  
   if training_process:
-    print("Attempting to save current model as best...")
     
     # Try to send SIGUSR1 to trigger model save (if supported)
     try:
@@ -230,7 +228,6 @@ def get_last_valid_checkpoint(model_folder: str):
 
 def extract_checkpoint_files(model_dir, target_dir):
   """Extract essential checkpoint files to target directory"""
-  
   essential_files = [BEST_CKPT, TRAINER_PARAMS]
 
   # Get the last valid checkpoint from the existing model
@@ -325,7 +322,6 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
 
 def continue_learning(model_dir, continue_data, network=None, backup=True):
   """Continue learning with proper backup-then-extract sequence"""
-
   # Validate model directory
   if not os.path.exists(model_dir):
     raise FileNotFoundError(f"Model directory not found: {model_dir}")
@@ -391,7 +387,6 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
   checkpoint_file = os.path.join(model_dir, "best.ckpt")
   if not os.path.exists(checkpoint_file):
     checkpoint_file = os.path.join(model_dir, TRAINER_PARAMS)
-
 
   cmd = [
     sys.executable, "-m", "calamari_ocr.scripts.train",
@@ -523,7 +518,3 @@ def main():
       print(f"\n🎉 Model continuation finished! Model: {args.model_folder}")
     else:
       print("❌ Continuation failed")
-      sys.exit(1)
-
-if __name__ == "__main__":
-  main()

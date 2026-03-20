@@ -192,11 +192,13 @@ class Database:
         print(f"Converted static URL to GT path: {gt_path}")
         print(f"GT filename: {gt_filename}")
       else:
-        # Original file path - convert .bin.png to .gt.txt
+        data_folder = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
         if img_path.endswith('.bin.png'):
-            gt_path = img_path.replace('.bin.png', '.gt.txt')
+            gt_filename = img_path.replace('.bin.png', '.gt.txt')
         else:
-            gt_path = img_path.rsplit('.', 1)[0] + '.gt.txt'
+            gt_filename = img_path.rsplit('.', 1)[0] + '.gt.txt'
+        base_dir = data_folder if '/' not in img_path else os.path.dirname(data_folder)
+        gt_path = os.path.join(base_dir, gt_filename)
         print(f"Using original GT path: {gt_path}")
       
       # Update .gt.txt file on disk
@@ -309,10 +311,29 @@ class Database:
       cursor = conn.execute("SELECT COUNT(*) FROM cases WHERE is_failset = 1")
       failset = cursor.fetchone()[0]
       
+      cursor = conn.execute("SELECT AVG(confidence) FROM cases")
+      avg_row = cursor.fetchone()
+      avg_confidence = float(avg_row[0]) if avg_row and avg_row[0] is not None else 0.0
+      
+      cursor = conn.execute(
+        "SELECT COUNT(*) FROM cases WHERE timestamp >= datetime('now', '-1 hour')"
+      )
+      recent_activity = cursor.fetchone()[0]
+      
       cursor = conn.execute("SELECT COUNT(*) FROM training_sessions")
       sessions = cursor.fetchone()[0]
       
-      return {"total": total, "failset": failset, "training_sessions": sessions}
+      failset_ratio = (100.0 * failset / total) if total else 0.0
+      return {
+        "total_cases": total,
+        "failset_cases": failset,
+        "avg_confidence": avg_confidence,
+        "recent_activity": recent_activity,
+        "failset_ratio": failset_ratio,
+        "total": total,
+        "failset": failset,
+        "training_sessions": sessions
+      }
   
   def insert_training_session(self, session_id: str, data_folder: str, checkpoint_folder: str,
                             network: Optional[str] = None, backup_folder: Optional[str] = None,

@@ -75,11 +75,8 @@ def active_evaluation_loop():
     try:
       case = get_random_case(weighted=True)
       if case and case.get('gt_text'):
-        # Get full path for prediction
-        # case['img_path'] already contains the relative path from the data parent folder
-        # So we need to join with the parent data folder, not the specific data folder
-        parent_data_dir = os.path.dirname(DATA_FOLDER)  # Get 'data' from 'data/single_case'
-        img_path = os.path.join(parent_data_dir, case['img_path'])
+        # Get full path for prediction: img_path is basename (e.g. 010081.bin.png), file is in DATA_FOLDER
+        img_path = os.path.join(DATA_FOLDER, case['img_path'])
         pred, conf = ocr_bridge.predict(img_path)
 
         # Update database with new prediction
@@ -177,11 +174,38 @@ signal.signal(signal.SIGTERM, signal_handler)
 @app.get("/api/statistics")
 async def get_statistics():
   stats = db.get_statistics()
+  # #region agent log
+  _log = stats if stats else {"total": 0, "failset": 0}
+  try:
+    with open("debug-fe785b.log", "a", encoding="utf-8") as f:
+      f.write('{"sessionId":"fe785b","runId":"stats","hypothesisId":"H2","location":"main.py:get_statistics","message":"API stats response","data":{"stats":_log},"timestamp":' + str(int(__import__("time").time() * 1000)) + '}\n')
+  except Exception: pass
+  # #endregion
   return stats if stats else {"total": 0, "failset": 0}
 
 @app.get("/api/cases")
 async def get_cases(limit: int = 100, failset_only: bool = False):
-  return db.get_cases(limit=limit, failset_only=failset_only)
+  cases = db.get_cases(limit=limit, failset_only=failset_only)
+  parent_data_dir = os.path.dirname(DATA_FOLDER)
+  data_sub = os.path.basename(DATA_FOLDER)
+  for c in cases:
+    ip = c.get("img_path", "")
+    if "/" not in ip and data_sub:
+      c["img_static_path"] = f"{data_sub}/{ip}"
+    else:
+      c["img_static_path"] = ip
+  # #region agent log
+  if cases:
+    c = cases[0]
+    ip = c.get("img_path", "")
+    static_path = c.get("img_static_path", ip)
+    resolved = os.path.join(parent_data_dir, static_path)
+    try:
+      with open("debug-fe785b.log", "a", encoding="utf-8") as f:
+        f.write('{"sessionId":"fe785b","runId":"cases","hypothesisId":"H1","location":"main.py:get_cases","message":"First case img_path and confidence","data":{"img_path":ip,"img_static_path":static_path,"confidence":c.get("confidence"),"resolved_exists":os.path.exists(resolved)},"timestamp":' + str(int(__import__("time").time() * 1000)) + '}\n')
+    except Exception: pass
+  # #endregion
+  return cases
 
 @app.post("/api/train")
 async def trigger_training(request: Request):
