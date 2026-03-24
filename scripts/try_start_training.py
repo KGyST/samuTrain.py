@@ -35,6 +35,15 @@ if sys.platform == "win32":
 training_process = None
 model_dir = None
 
+# Import Calamari library components for library mode
+try:
+  from calamari_ocr.ocr.scenario import CalamariScenario
+  from calamari_ocr.scripts.train import main as calamari_train
+  LIB_MODE = True
+except ImportError:
+  print("⚠️ Calamari library not available, falling back to CLI mode")
+  LIB_MODE = False
+
 def normalize_data_path(data_path):
   # If already contains glob pattern or .bin.png, return as-is
   if "*" in data_path or data_path.endswith(".bin.png"):
@@ -321,14 +330,65 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
 
 
 def continue_learning(model_dir, continue_data, network=None, backup=True):
-  """Continue learning with proper backup-then-extract sequence"""
+  """Continue learning with proper backup-then-extract sequence using library mode"""
   # Validate model directory
   if not os.path.exists(model_dir):
     raise FileNotFoundError(f"Model directory not found: {model_dir}")
   if not os.path.isdir(model_dir):
     raise ValueError(f"Model path is not a directory: {model_dir}")
 
-  print(f"🔄 Continuing training with additional data...")
+  print(f"🔄 Continuing training with additional data (Library Mode)...")
+  print(f"📁 Model: {model_dir}")
+  print(f"📊 Continue data: {continue_data}")
+
+  if not LIB_MODE:
+    print("⚠️ Library mode not available, falling back to CLI mode")
+    return continue_learning_cli(model_dir, continue_data, network, backup)
+
+  try:
+    # Import ContinueLearningEngine
+    from engines.continue_learning import ContinueLearningEngine
+
+    # Create continue learning engine
+    engine = ContinueLearningEngine(model_dir)
+
+    # Run continue learning using library mode
+    result = engine.continue_learning_sync(
+      data_folder=continue_data,
+      checkpoint_folder=model_dir,
+      network=network,
+      backup=backup
+    )
+
+    if result["success"]:
+      print("✅ Continue learning completed successfully!")
+      print(f"New model location: {result.get('model_dir')}")
+      if result.get('backup_dir'):
+        print(f"Model backup: {result['backup_dir']}")
+      print(f"Network: {result.get('network')}")
+      print(f"Characters learned: {result.get('chars_count', 0)}")
+      return True
+    else:
+      print(f"❌ Continue learning failed: {result.get('error')}")
+      return False
+
+  except KeyboardInterrupt:
+    signal_handler(signal.SIGINT, None)
+    return False
+  except Exception as e:
+    print(f"❌ Error during continue learning: {e}")
+    return False
+
+
+def continue_learning_cli(model_dir, continue_data, network=None, backup=True):
+  """Continue learning with CLI mode as fallback"""
+  # Validate model directory
+  if not os.path.exists(model_dir):
+    raise FileNotFoundError(f"Model directory not found: {model_dir}")
+  if not os.path.isdir(model_dir):
+    raise ValueError(f"Model path is not a directory: {model_dir}")
+
+  print(f"🔄 Continuing training with additional data (CLI Mode)...")
   print(f"📁 Model: {model_dir}")
   print(f"📊 Continue data: {continue_data}")
 
@@ -518,3 +578,9 @@ def main():
       print(f"\n🎉 Model continuation finished! Model: {args.model_folder}")
     else:
       print("❌ Continuation failed")
+      sys.exit(1)
+
+if __name__ == "__main__":
+  main()
+
+  
