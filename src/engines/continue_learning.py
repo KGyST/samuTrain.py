@@ -137,7 +137,7 @@ class ContinueLearningEngine:
     # Training data
     trainer_params.gen.train.images = [os.path.join(data_folder, "*.bin.png")]
     trainer_params.gen.train.skip_invalid = True
-    trainer_params.gen.train.batch_size = 1
+    trainer_params.gen.setup.train.batch_size = 1
     trainer_params.gen.setup.train.num_processes = 1
     
     # Use training data for validation (TrainOnly)
