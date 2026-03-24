@@ -36,13 +36,8 @@ training_process = None
 model_dir = None
 
 # Import Calamari library components for library mode
-try:
-  from calamari_ocr.ocr.scenario import CalamariScenario
-  from calamari_ocr.scripts.train import main as calamari_train
-  LIB_MODE = True
-except ImportError:
-  print("⚠️ Calamari library not available, falling back to CLI mode")
-  LIB_MODE = False
+from calamari_ocr.ocr.scenario import CalamariScenario
+from calamari_ocr.scripts.train import main as calamari_train
 
 def normalize_data_path(data_path):
   # If already contains glob pattern or .bin.png, return as-is
@@ -321,16 +316,15 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
       return False
       
   except KeyboardInterrupt:
-    signal_handler(signal.SIGINT, None)
+    signal_handler(signal.SIGINT)
   except Exception as e:
     print(f"❌ Error during initial training: {e}")
     return False
   finally:
     training_process = None
 
-
 def continue_learning(model_dir, continue_data, network=None, backup=True):
-  """Continue learning with proper backup-then-extract sequence using library mode"""
+  """Continue learning using library API with backup and file handling"""
   # Validate model directory
   if not os.path.exists(model_dir):
     raise FileNotFoundError(f"Model directory not found: {model_dir}")
@@ -338,57 +332,6 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
     raise ValueError(f"Model path is not a directory: {model_dir}")
 
   print(f"🔄 Continuing training with additional data (Library Mode)...")
-  print(f"📁 Model: {model_dir}")
-  print(f"📊 Continue data: {continue_data}")
-
-  if not LIB_MODE:
-    print("⚠️ Library mode not available, falling back to CLI mode")
-    return continue_learning_cli(model_dir, continue_data, network, backup)
-
-  try:
-    # Import ContinueLearningEngine
-    from engines.continue_learning import ContinueLearningEngine
-
-    # Create continue learning engine
-    engine = ContinueLearningEngine(model_dir)
-
-    # Run continue learning using library mode
-    result = engine.continue_learning_sync(
-      data_folder=continue_data,
-      checkpoint_folder=model_dir,
-      network=network,
-      backup=backup
-    )
-
-    if result["success"]:
-      print("✅ Continue learning completed successfully!")
-      print(f"New model location: {result.get('model_dir')}")
-      if result.get('backup_dir'):
-        print(f"Model backup: {result['backup_dir']}")
-      print(f"Network: {result.get('network')}")
-      print(f"Characters learned: {result.get('chars_count', 0)}")
-      return True
-    else:
-      print(f"❌ Continue learning failed: {result.get('error')}")
-      return False
-
-  except KeyboardInterrupt:
-    signal_handler(signal.SIGINT, None)
-    return False
-  except Exception as e:
-    print(f"❌ Error during continue learning: {e}")
-    return False
-
-
-def continue_learning_cli(model_dir, continue_data, network=None, backup=True):
-  """Continue learning with CLI mode as fallback"""
-  # Validate model directory
-  if not os.path.exists(model_dir):
-    raise FileNotFoundError(f"Model directory not found: {model_dir}")
-  if not os.path.isdir(model_dir):
-    raise ValueError(f"Model path is not a directory: {model_dir}")
-
-  print(f"🔄 Continuing training with additional data (CLI Mode)...")
   print(f"📁 Model: {model_dir}")
   print(f"📊 Continue data: {continue_data}")
 
@@ -410,7 +353,8 @@ def continue_learning_cli(model_dir, continue_data, network=None, backup=True):
     print(f"✅ Extracted essential files from backup to new model directory")
   elif not backup_dir:
     # If no backup was made, extract from the checkpoint directly
-    if extract_checkpoint_files(last_checkpoint, model_dir):
+    last_checkpoint = get_last_valid_checkpoint(model_dir)
+    if last_checkpoint and extract_checkpoint_files(last_checkpoint, model_dir):
       print(f"✅ Extracted essential files to model directory")
     else:
       raise RuntimeError("Failed to extract checkpoint files")
@@ -443,71 +387,70 @@ def continue_learning_cli(model_dir, continue_data, network=None, backup=True):
       f.write(''.join(chars))
     print(f"📝 Extended charset file created: {charset_file}")
 
-  # Build training command using extracted files from model directory
-  checkpoint_file = os.path.join(model_dir, "best.ckpt")
-  if not os.path.exists(checkpoint_file):
-    checkpoint_file = os.path.join(model_dir, TRAINER_PARAMS)
-
-  cmd = [
-    sys.executable, "-m", "calamari_ocr.scripts.train",
-    "--warmstart.model", checkpoint_file,
-    "--trainer.auto_upgrade_checkpoints", "True",
-    "--trainer.output_dir", model_dir,
-    "--train.images", data_pattern,
-    "--train.skip_invalid", "True",
-    "--train.batch_size", "1",
-    "--trainer.gen", "TrainOnly",
-    "--early_stopping.n_to_go", "-1",
-    "--network", network
-  ]
-
-  # Add codec extension if new characters
-  if charset_file:
-    cmd.extend([
-      "--codec.include_files", charset_file,
-      "--codec.auto_compute", "True",
-      "--codec.keep_loaded", "True"
-    ])
-
-  print("🚀 Training command:")
-  print(" ".join(f'"{arg}"' if " " in arg else arg for arg in cmd))
-  print(f"📁 New model will be created in: {model_dir}")
-
-  global training_process
   try:
-    training_process = subprocess.Popen(
-      cmd,
-      stdout=subprocess.PIPE,
-      stderr=subprocess.STDOUT,
-      text=True,
-      encoding=UTF_8,
-      errors='replace',
-      universal_newlines=True,
-      bufsize=1
-    )
+    from calamari_ocr.ocr.training.params import TrainerParams
+    from calamari_ocr.ocr.scenario import CalamariScenario
+    
+    # Get default trainer params
+    trainer_params = CalamariScenario.default_trainer_params()
+    
+    # Set basic parameters
+    trainer_params.output_dir = model_dir
+    trainer_params.epochs = 100
+    trainer_params.auto_upgrade_checkpoints = True
+    trainer_params.network = network
+    
+    # Early stopping
+    trainer_params.early_stopping.n_to_go = -1  # Disable early stopping
+    
+    # Training data
+    trainer_params.gen.train.images = [data_pattern]
+    trainer_params.gen.train.skip_invalid = True
+    trainer_params.gen.setup.train.batch_size = 1
+    trainer_params.gen.setup.train.num_processes = 1
+    
+    # Use training data for validation (TrainOnly)
+    trainer_params.gen.val.images = trainer_params.gen.train.images
+    trainer_params.gen.setup.val.num_processes = 1
+    
+    # Warmstart parameters
+    checkpoint_file = os.path.join(model_dir, "best.ckpt")
+    if not os.path.exists(checkpoint_file):
+      checkpoint_file = os.path.join(model_dir, TRAINER_PARAMS)
+    
+    if not os.path.exists(checkpoint_file):
+      raise FileNotFoundError(f"Checkpoint not found: {checkpoint_file}")
+    
+    trainer_params.warmstart.model = checkpoint_file
+    trainer_params.warmstart.allow_partial = True
+    trainer_params.warmstart.trim_graph_name = False
+    
+    # Codec extension if new characters
+    if charset_file:
+      trainer_params.codec.include_files = [charset_file]
+      trainer_params.codec.auto_compute = True
+      trainer_params.codec.keep_loaded = True
+    
+    # Disable progress bar for cleaner output
+    trainer_params.progress_bar = False
 
-    # Monitor output in real-time
-    for line in iter(training_process.stdout.readline, ''):
-      if line.strip():
-        cleaned_line = clean_unicode_text(line.strip())
-        print(cleaned_line)
+    print("🚀 Starting training with library API...")
+    print(f"📁 New model will be created in: {model_dir}")
+    print(f"🔧 Using checkpoint: {checkpoint_file}")
+    print(f"🌐 Network: {network}")
 
-    training_process.wait()
-    if training_process.returncode == 0:
-      print("✅ Training completed successfully!")
-      return True
-    else:
-      print(f"❌ Training failed with code: {training_process.returncode}")
-      return False
+    # Run training using library API
+    result = calamari_train(trainer_params)
+    
+    print("✅ Training completed successfully!")
+    return True
 
   except KeyboardInterrupt:
-    signal_handler(signal.SIGINT, None)
+    signal_handler(signal.SIGINT)
     return False
   except Exception as e:
     print(f"❌ Error during training: {e}")
     return False
-  finally:
-    training_process = None
 
 def main():
   # Set up signal handlers for graceful shutdown
