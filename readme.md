@@ -25,25 +25,9 @@ A core goal of **samuTrain** is the strict separation of management logic from t
 ## ARCHITECTURE.md
 - For technical details, see ARCHITECTURE.md
 
-## Frugal Development Manifesto
-- **Zero-Waste Multiprocessing**: Efficiency is measured by total time. Due to Windows "Spawn" overhead, we strictly limit `num_processes` (max 2 for small sets) to avoid the "multiprocessing tax."
-- **FOSS Only**: Built 100% on Free and Open Source Software.
-- **Local-First**: No cloud dependencies; all logs and weights stay on local storage.
-
-## Performance Benchmark (64-case Audit)
-| Configuration | Total Time | Efficiency |
-| :--- | :--- | :--- |
-| **1 Process** | 117.2s | Baseline |
-| **2 Processes** | **109.1s** | **Optimal** |
-| **7 Processes** | 144.2s | Degraded |
-
 ## Technical Specifications
 - **Current Engine**: Calamari OCR (v2.3.1)
 - **Backend**: TensorFlow 2.15.0+
 - **Database**: Built-in `sqlite3`
 - **Coding Standard**: 2-space indentation, English-only comments, no end-of-line comments.
 
-## TODOs
-- [ ] **Virtual Batcher**: Implement the DB-weighted sample selector in `src/db.py`.
-- [ ] **Engine Switching**: Add a simple non-OCR dummy project to verify agnosticism.
-- [ ] **UI Sync**: Map the DB 'FAIL' count to the `samuLearnUI.ts` dashboard for real-time monitoring.

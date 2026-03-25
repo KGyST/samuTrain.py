@@ -39,7 +39,7 @@ except ImportError:
 class ContinueLearningEngine:
   """Library-based continue learning engine with async support and unicode logging"""
   
-  def __init__(self, model_dir: str):
+  def __init__(self, model_dir: str, interruption_manager=None):
     self.model_dir = model_dir
     self.logger = logging.getLogger(__name__)
     self.logger.setLevel(logging.INFO)
@@ -48,6 +48,9 @@ class ContinueLearningEngine:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     self.logger.addHandler(handler)
+    
+    # Set interruption manager if provided
+    self._interruption_manager = interruption_manager
     
     if not LIB_MODE:
       self.logger.error("Calamari library not available - continue learning disabled")
@@ -224,9 +227,16 @@ class ContinueLearningEngine:
       
       def run_training():
         try:
+          # Check for interruption before starting
+          if hasattr(self, '_interruption_manager') and self._interruption_manager.is_shutdown_requested():
+            return {"success": False, "error": "Training interrupted before start"}
+          
           # Use calamari_train directly with the params
           result = calamari_train(trainer_params)
           return {"success": True, "result": result}
+        except KeyboardInterrupt:
+          self.logger.info("Training interrupted by user")
+          return {"success": False, "error": "Training interrupted"}
         except Exception as e:
           self.logger.error(f"Training failed: {e}")
           return {"success": False, "error": str(e)}

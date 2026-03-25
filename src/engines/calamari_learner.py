@@ -11,13 +11,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings('ignore', category=UserWarning)
 
 class CalamariLearner(LearnerInterface):
-  def __init__(self, model_path: str):
+  def __init__(self, model_path: str, interruption_manager=None):
     self.model_path = model_path
     self.predictor = None
+    self.interruption_manager = interruption_manager
     # Extract model directory from model path for continue learning
     self.model_dir = os.path.dirname(model_path)
     # Initialize continue learning engine
-    self.learning_engine = ContinueLearningEngine(self.model_dir)
+    self.learning_engine = ContinueLearningEngine(self.model_dir, interruption_manager)
 
   def predict(self, image_path: str) -> Tuple[str, float]:
     if not self.predictor:

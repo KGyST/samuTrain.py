@@ -1,0 +1,6 @@
+# Running python files
+- **Strictly use Virtual Environments**: The Virtual Environment is in the folder venv_310
+- **Script Parameters**: Agent must check what arguments are appropriate for the script actually run.
+- **Example Runners**:
+  - `cd "e:\Git\samuTrain.py"; .\venv_310\Scripts\python.exe .\some_python_script.py  some_parameter`
+
