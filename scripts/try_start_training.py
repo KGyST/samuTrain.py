@@ -1,11 +1,10 @@
 # What is this file for: Unified training script that starts from scratch or continues existing models, with checkpoint validation and proper file handling for continuation training. Consolidated from try_continue_learning.py with all functions in one module, simplified logic, and fixed checkpoint copying to extract files to project root instead of creating/overwriting fake checkpoints. Uses last valid checkpoint with enhanced validation.
 # When it is created: 2026-03-17 (complete refactoring)
 
-import os, sys, json, subprocess, argparse, glob, shutil, signal, codecs, uuid
+import os, sys, json, glob, shutil, signal, codecs
 from datetime import datetime
 
 from numpy.ma.core import bool_
-
 
 UTF_8 = 'utf-8'
 TRAINER_PARAMS = "trainer_params.json"
@@ -31,13 +30,16 @@ if sys.platform == "win32":
   import codecs
   sys.stdout = codecs.getwriter(UTF_8)(sys.stdout.detach())
 
-# Global variables for graceful shutdown
+# Global variables for graceful shutdown (kept for compatibility)
 training_process = None
 model_dir = None
 
 # Import Calamari library components for library mode
 from calamari_ocr.ocr.scenario import CalamariScenario
 from calamari_ocr.scripts.train import main as calamari_train
+
+# Import argparse for CLI interface
+import argparse
 
 def normalize_data_path(data_path):
   # If already contains glob pattern or .bin.png, return as-is
@@ -56,44 +58,6 @@ def normalize_data_path(data_path):
   
   # Otherwise, assume it's a glob pattern
   return data_path
-
-def clean_unicode_text(text: str) -> str:
-  """Remove or replace invisible Unicode control characters for better display"""
-  if not text:
-    return text
-  
-  # Handle both actual Unicode characters and their escaped representations
-  replacements = {
-    # Actual Unicode characters
-    # '\u200b': '',  # Zero Width Space
-    # '\u200c': '',  # Zero Width Non-Joiner
-    # '\u200d': '',  # Zero Width Joiner
-    # '\u200e': '',  # Left-to-Right Mark
-    # '\u200f': '',  # Right-to-Left Mark
-    '\u202a': '[LTR]',  # Left-to-Right Embedding
-    '\u202b': '[RTL]',  # Right-to-Left Embedding
-    '\u202c': '[PDF]',  # Pop Directional Formatting
-    '\u202d': '[LRO]',  # Left-to-Right Override
-    '\u202e': '[RLO]',  # Right-to-Left Override
-    # '\u2060': '',  # Word Joiner
-    # '\u2061': '',  # Function Application
-    # '\u2062': '',  # Invisible Separator
-    # '\u2063': '',  # Invisible Plus
-    # '\u2064': '',  # Invisible Times
-    # '\ufeff': '',  # Zero Width No-Break Space (BOM)
-  }
-
-  replacements = {
-    **replacements,
-    **{f'{repr(r)[1:-1]}': s for r, s in replacements.items()}
-  }
-  
-  # Replace control characters with readable alternatives or remove them
-  cleaned = text
-  for char, replacement in replacements.items():
-    cleaned = cleaned.replace(char, replacement)
-  
-  return cleaned
 
 def collect_chars(data_folder: str):
   chars = set()
@@ -149,7 +113,7 @@ def get_current_network(model_dir: str) -> None | str:
 
   return None
 
-def signal_handler(signum):
+def signal_handler(signum, teszt = None):
   """Handle Ctrl+C gracefully and save best model"""
   global training_process, model_dir
   print(f"\nReceived signal {signum}. Saving best model before shutdown...")
@@ -168,7 +132,7 @@ def signal_handler(signum):
       # Give more time for potential model saving
       training_process.wait(timeout=60)  # Wait up to 60 seconds
       print("Training terminated gracefully")
-    except subprocess.TimeoutExpired:
+    except Exception:
       print("Training didn't terminate gracefully, forcing kill...")
       training_process.kill()
       training_process.wait()
@@ -267,13 +231,85 @@ def extract_checkpoint_files(model_dir, target_dir):
   print(f"Extracted {extracted_count} checkpoint files to {target_dir}")
   return extracted_count > 0
 
-def start_initial_training(data_pattern, epochs, output_dir, network):
-  """Start training from scratch using train.py logic"""
-  global training_process
-  if not network:
-    network = "cnn=8:3x3,pool=2x2,lstm=32"
+def create_base_trainer_params(output_dir, epochs, network):
+  """Create base TrainerParams with common settings for both initial and continuation training"""
+  from calamari_ocr.ocr.training.params import TrainerParams
+  from calamari_ocr.ocr.scenario import CalamariScenario
   
-  print("🚀 Starting initial training from scratch...")
+  # Get default trainer params
+  trainer_params = CalamariScenario.default_trainer_params()
+  
+  # Set basic parameters
+  trainer_params.output_dir = output_dir
+  trainer_params.epochs = epochs
+  trainer_params.auto_upgrade_checkpoints = True
+  trainer_params.network = network
+  
+  # Early stopping
+  trainer_params.early_stopping.n_to_go = -1  # Disable early stopping
+  
+  # Training data setup (will be configured by caller)
+  trainer_params.gen.train.skip_invalid = True
+  trainer_params.gen.setup.train.batch_size = 1
+  trainer_params.gen.setup.train.num_processes = 1
+  
+  # Use training data for validation (TrainOnly) - will be configured by caller
+  trainer_params.gen.setup.val.num_processes = 1
+  
+  # Codec settings
+  trainer_params.codec.auto_compute = True
+  trainer_params.codec.keep_loaded = True
+  
+  # Disable progress bar for cleaner output
+  trainer_params.progress_bar = False
+  
+  return trainer_params
+
+def create_trainer_params_for_initial_training(data_pattern, epochs, output_dir, network):
+  """Create TrainerParams for initial training from scratch using library API"""
+  trainer_params = create_base_trainer_params(
+    output_dir, epochs, network if network else "cnn=8:3x3,pool=2x2,lstm=32"
+  )
+  
+  # Set training data for initial training
+  trainer_params.gen.train.images = [data_pattern]
+  trainer_params.gen.val.images = trainer_params.gen.train.images
+  
+  # No warmstart for initial training
+  trainer_params.warmstart.model = None
+  
+  return trainer_params
+
+def setup_charset_extension(trainer_params, chars, model_dir):
+  """Setup charset extension if new characters are found"""
+  charset_file = None
+  if chars:
+    charset_file = os.path.join(model_dir, "extended_charset.txt")
+    with open(charset_file, 'w', encoding=UTF_8) as f:
+      f.write(''.join(chars))
+    
+    trainer_params.codec.include_files = [charset_file]
+    trainer_params.codec.auto_compute = True
+    trainer_params.codec.keep_loaded = True
+    print(f"📝 Extended charset file created: {charset_file}")
+  
+  return charset_file
+
+def setup_library_training_environment():
+  """Setup common environment for library-based training"""
+  # Force minimal logging
+  os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+  os.environ["PYTHONWARNINGS"] = "ignore"
+  os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
+  
+  # Protocol Buffers compatibility
+  os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+
+def start_initial_training(data_pattern, epochs, output_dir, network):
+  """Start training from scratch using library API (instead of CLI)"""
+  global training_process
+  
+  print("🚀 Starting initial training from scratch (Library Mode)...")
   print(f"📊 Data: {data_pattern}")
   print(f"🎯 Epochs: {epochs}")
   print(f"📁 Output: {output_dir}")
@@ -285,43 +321,38 @@ def start_initial_training(data_pattern, epochs, output_dir, network):
   data_pattern = os.path.abspath(data_pattern)
   output_dir = os.path.abspath(output_dir)
   
-  # Build training command (no warmstart for new models)
-  cmd = [
-    sys.executable, "-m", "calamari_ocr.scripts.train",
-    "--train.images", data_pattern,
-    "--trainer.epochs", str(epochs),
-    "--trainer.output_dir", output_dir,
-    "--trainer.best_model_prefix", "best",
-    "--trainer.gen", "TrainOnly",
-    "--train.batch_size", "1",
-    "--val.batch_size", "1",
-    "--codec.auto_compute", "True",
-    "--network", network
-  ]
+  # Setup environment
+  setup_library_training_environment()
   
-  print(f"Command: {' '.join(cmd)}\n")
+  # Verify dataset
+  if not verify_dataset(data_pattern):
+    raise ValueError(f"Dataset verification failed for: {data_pattern}")
   
   try:
-    training_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-    for line in iter(training_process.stdout.readline, ''):
-      if line.strip():
-        print(line.strip())
+    # Create trainer parameters using library API
+    trainer_params = create_trainer_params_for_initial_training(
+      data_pattern, epochs, output_dir, network
+    )
     
-    training_process.wait()
-    if training_process.returncode == 0:
-      print("✅ Initial training completed successfully!")
-      return True
-    else:
-      print(f"❌ Initial training failed with code: {training_process.returncode}")
+    print(f"🔧 Using network: {trainer_params.network}")
+    print(f"📁 Model will be saved to: {output_dir}")
+    
+    # Run training using library API (same as continue_learning)
+    result = calamari_train(trainer_params)
+    
+    if result is None or (hasattr(result, 'returncode') and result.returncode != 0):
+      print("❌ Initial training failed")
       return False
-      
+    
+    print("✅ Initial training completed successfully!")
+    return True
+    
   except KeyboardInterrupt:
     signal_handler(signal.SIGINT)
+    return False
   except Exception as e:
     print(f"❌ Error during initial training: {e}")
     return False
-  finally:
-    training_process = None
 
 def continue_learning(model_dir, continue_data, network=None, backup=True):
   """Continue learning using library API with backup and file handling"""
@@ -379,39 +410,13 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
   chars = collect_chars(continue_data)
   print(f"Characters in new data: {''.join(chars)} ({len(chars)} total)")
 
-  # Create extended charset file if new characters found
-  charset_file = None
-  if chars:
-    charset_file = os.path.join(model_dir, "extended_charset.txt")
-    with open(charset_file, 'w', encoding=UTF_8) as f:
-      f.write(''.join(chars))
-    print(f"📝 Extended charset file created: {charset_file}")
-
   try:
-    from calamari_ocr.ocr.training.params import TrainerParams
-    from calamari_ocr.ocr.scenario import CalamariScenario
+    # Create base trainer parameters using shared function
+    trainer_params = create_base_trainer_params(model_dir, 100, network)
     
-    # Get default trainer params
-    trainer_params = CalamariScenario.default_trainer_params()
-    
-    # Set basic parameters
-    trainer_params.output_dir = model_dir
-    trainer_params.epochs = 100
-    trainer_params.auto_upgrade_checkpoints = True
-    trainer_params.network = network
-    
-    # Early stopping
-    trainer_params.early_stopping.n_to_go = -1  # Disable early stopping
-    
-    # Training data
+    # Set training data for continuation learning
     trainer_params.gen.train.images = [data_pattern]
-    trainer_params.gen.train.skip_invalid = True
-    trainer_params.gen.setup.train.batch_size = 1
-    trainer_params.gen.setup.train.num_processes = 1
-    
-    # Use training data for validation (TrainOnly)
     trainer_params.gen.val.images = trainer_params.gen.train.images
-    trainer_params.gen.setup.val.num_processes = 1
     
     # Warmstart parameters
     checkpoint_file = os.path.join(model_dir, "best.ckpt")
@@ -425,14 +430,8 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
     trainer_params.warmstart.allow_partial = True
     trainer_params.warmstart.trim_graph_name = False
     
-    # Codec extension if new characters
-    if charset_file:
-      trainer_params.codec.include_files = [charset_file]
-      trainer_params.codec.auto_compute = True
-      trainer_params.codec.keep_loaded = True
-    
-    # Disable progress bar for cleaner output
-    trainer_params.progress_bar = False
+    # Setup charset extension using shared function
+    charset_file = setup_charset_extension(trainer_params, chars, model_dir)
 
     print("🚀 Starting training with library API...")
     print(f"📁 New model will be created in: {model_dir}")
@@ -444,7 +443,6 @@ def continue_learning(model_dir, continue_data, network=None, backup=True):
     
     print("✅ Training completed successfully!")
     return True
-
   except KeyboardInterrupt:
     signal_handler(signal.SIGINT)
     return False

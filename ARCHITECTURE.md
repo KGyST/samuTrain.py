@@ -60,3 +60,67 @@ The project focuses on creating a man-in-the-loop, supervised online learing pro
     - started_at (DATETIME DEFAULT CURRENT_TIMESTAMP)
     - completed_at (DATETIME)
     - error_message (TEXT)
+
+### E. Architecture
+flowchart TB
+    %% --- STYLE DEFINITIONS ---
+    classDef BE fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef FE fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef DB fill:#e8f5e9,stroke:#2e7d32,stroke-dasharray: 5 5
+    classDef EN fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+
+    %% --- SYSTEM LAUNCHER ---
+    LAUNCHER[scripts/run_server.py<br/>Server Launcher]:::BE
+    
+    %% --- CORE SYSTEM ---
+    subgraph CORE ["CORE (STABLE)"]
+        direction TB
+        UI_SHELL[samuLearnUI.ts<br/>index.html]:::FE
+        ORCHESTRATOR[main.py<br/>FastAPI Server]:::BE
+        STATIC[static/]:::FE
+    end
+    
+    %% --- PROJECT DOMAIN ---
+    subgraph PROJECT ["PROJECT (SWAPPABLE)"]
+        direction TB
+        BRIDGE[bridge.py<br/>OCR Wrapper]:::BE
+        
+        subgraph ENGINES ["Learning Engines"]
+            CAL_LEARNER[engines/calamari_learner.py]:::EN
+            CONT_LEARN[engines/continue_learning.py]:::EN
+            LEARN_INT[engines/learner_interface.py]:::EN
+        end
+        
+        LIB_CAL[lib/calamari<br/>OCR Library]:::BE
+        REPO[repository.py<br/>Data Access]:::BE
+        
+        subgraph STORAGE ["Data & Models"]
+            DB_FILE[(samu.db)]:::DB
+            DATA_DIR[data/]:::DB
+            MODELS_DIR[models/]:::DB
+        end
+    end
+    
+    %% --- INTERFACES (Labeled Relations) ---
+    LAUNCHER -- "Launches" --> ORCHESTRATOR
+    
+    UI_SHELL -- "HTTP API" --> ORCHESTRATOR
+    UI_SHELL <-- "JSON Response" --> ORCHESTRATOR
+    UI_SHELL -- "Static Files" --> STATIC
+    
+    ORCHESTRATOR -- "Calls" --> BRIDGE
+    ORCHESTRATOR -- "Direct Access" --> DB_FILE
+    ORCHESTRATOR -- "Uses" --> REPO
+    
+    BRIDGE -- "Delegates to" --> ENGINES
+    ENGINES -- "Uses" --> LIB_CAL
+    
+    REPO -- "CRUD Operations" --> DB_FILE
+    
+    LIB_CAL -- "Read/Write" --> DATA_DIR
+    LIB_CAL -- "Load/Save" --> MODELS_DIR
+    
+    %% --- Data Flow Annotations ---
+    ORCHESTRATOR -- "State/Config" --> DB_FILE
+    ENGINES -- "Training Progress" --> DB_FILE
+

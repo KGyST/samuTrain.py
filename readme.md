@@ -20,6 +20,7 @@ This ensures data integrity and high-speed batching.
 A core goal of **samuTrain** is the strict separation of management logic from the ML engine:
 - **Engine Agnosticism**: All engine-specific calls (currently Calamari) are isolated in `src/bridge.py`. The orchestrator treats the engine as a replaceable component.
 - **Environment Isolation**: Engine dependencies (e.g., TensorFlow 2.15.0) are confined to the `venv_310`, keeping the orchestrator's environment clean.
+- **Example Python Runner**: `cd "e:\Git\samuTrain.py"; .\venv_310\Scripts\python.exe .\scripts\try_start_training.py  data/64_case models/generic_ocr_model_3`
 
 ## ARCHITECTURE.md
 - For technical details, see ARCHITECTURE.md
