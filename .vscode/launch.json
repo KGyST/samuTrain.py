@@ -2,16 +2,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug samuTrain Server",
+            "name": "Run server",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/try_prediction.py",
-            // "program": "${workspaceFolder}/scripts/run_server.py",
-            "args": [
-                // "--reset-db",
-                // "--data-folder", "data/1962",
-                // "--model-folder", "models/new_model_1962"
-            ],
+            "program": "${workspaceFolder}/src/run_server.py",
+            "args": ["--new"],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "python": "${workspaceFolder}/venv_310/Scripts/python",
@@ -20,42 +15,19 @@
             }
         },
         {
-            "name": "Run try_continue_learning",
+            "name": "Debug Backend Emulation",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/try_continue_learning.py",
-            "args": ["data/single_case", "models/tiny_test"],
+            "program": "${workspaceFolder}/scripts/try_backend_emulation.py",
+            "args": ["data/64_case", "models/generic_ocr_model"],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "python": "${workspaceFolder}/venv_310/Scripts/python",
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
-            }
-        },
-        {
-            "name": "Debug try_start_training (Continue)",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/try_start_training.py",
-            "args": ["data/64_case", "models/generic_ocr_model_3"],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "python": "${workspaceFolder}/venv_310/Scripts/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
-            }
-        },
-        {
-            "name": "Debug try_start_training (New)",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/try_start_training.py",
-            "args": ["data/single_case", "models/debug_test", "--new", "--epochs", "1"],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "python": "${workspaceFolder}/venv_310/Scripts/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}",
+                "TF_CPP_MIN_LOG_LEVEL": "3",
+                "PYTHONWARNINGS": "ignore",
+                "CALAMARI_LOG_LEVEL": "ERROR"
             }
         }
     ]

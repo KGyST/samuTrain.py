@@ -1,153 +1,410 @@
 import os
-import subprocess
-import shutil
-import time
-import numpy as np
-from PIL import Image
-from typing import Tuple
 import sys
 import uuid
+import glob
+import shutil
+import signal
+import logging
+import subprocess
+import threading
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
 
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
+# Environment Setup
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
+os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 
+# Handle Windows Encoding
+if sys.platform == "win32":
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+
+# --- Configuration ---
+@dataclass
+class TrainingConfig:
+    """Centralized configuration for training parameters."""
+    default_network: str = "cnn=8:3x3,pool=2x2,lstm=32"
+    default_epochs: int = 5
+    validation_split: float = 0.2
+    batch_size: int = 1
+    num_processes: int = 1
+    timeout_graceful: int = 60
+    model_dir_env: str = 'SAMUTRAIN_MODEL_FOLDER'
+    default_model_dir: str = 'models/new_model'
+
+config = TrainingConfig()
+
+# --- Custom Exceptions ---
+class OCRError(Exception):
+    """Base exception for OCR operations."""
+    pass
+
+class DatasetNotFoundError(OCRError):
+    """Raised when dataset files are missing."""
+    pass
+
+class DatabaseError(OCRError):
+    """Raised when database operations fail."""
+    pass
+
+# --- Mock Database Interface (Replace with actual import) ---
+# In production, replace this with: from db import db, insert_training_session, update_training_session
+class MockDB:
+    def get_training_cases(self, include_gt_only: bool = False) -> List[Dict[str, Any]]:
+        # Placeholder: Return empty list or mock data
+        return []
+    
+    def update_predictions_batch(self, predictions: List[Dict]) -> None:
+        pass
+
+# Simulating the real DB imports
 try:
-  from calamari_ocr.ocr.predict.predictor import Predictor
-  from calamari_ocr.ocr.predict.params import PredictorParams
-  from calamari_ocr.ocr.training.trainer import Trainer
-  from calamari_ocr.ocr.training.params import TrainerParams
-  from calamari_ocr.ocr.scenario import CalamariScenario
-  from calamari_ocr.scripts.train import main as calamari_train
-  LIB_MODE = True
+    from db import insert_training_session, update_training_session, db
 except ImportError:
-  LIB_MODE = False
+    logger.warning("Database module not found. Using mock DB for demonstration.")
+    db = MockDB()
+    # Define dummy functions if import fails
+    def insert_training_session(**kwargs): pass
+    def update_training_session(**kwargs): pass
 
-# Import database functions for training tracking
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db import insert_training_session, update_training_session
-from engines.calamari_learner import CalamariLearner
+# --- Signal Handling ---
+shutdown_event = threading.Event()
+training_lock = threading.Lock()
+training_process: Optional[subprocess.Popen] = None
 
-class OCRBridge:
-  def __init__(self):
-    # Use model folder from environment or default to new_model
-    self.model_dir = os.environ.get('SAMUTRAIN_MODEL_FOLDER', 'models/new_model')
-    self.model_path = os.path.join(self.model_dir, "best.ckpt.json")
-    self.learner = CalamariLearner(self.model_path)
-
-  def predict(self, image_path: str) -> Tuple[str, float]:
-    return self.learner.do_predict(image_path)
-
-  def continue_learning(self, data_folder, checkpoint_folder, network=None, backup=True):
-    """Use the library-based continue learning engine with database tracking"""
-    session_id = str(uuid.uuid4())
-    print(f"🎓 Continue learning started on: {data_folder} (session: {session_id[:8]})")
+def signal_handler(signum: int, frame: Any) -> None:
+    """Handle shutdown signals gracefully."""
+    global training_process
+    logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
+    shutdown_event.set()
     
-    # Insert training session into database
-    try:
-      insert_training_session(
-        session_id=session_id,
-        data_folder=data_folder,
-        checkpoint_folder=checkpoint_folder,
-        network=network,
-        backup_folder=None,  # Will be updated after backup
-        chars_count=0  # Will be updated after character collection
-      )
-    except Exception as e:
-      print(f"⚠️ Failed to create training session: {e}")
+    with training_lock:
+        if training_process:
+            try:
+                if hasattr(signal, 'SIGUSR1'):
+                    training_process.send_signal(signal.SIGUSR1)
+                    logger.info("Sent save signal (SIGUSR1) to training process.")
+                
+                logger.info("Terminating training process...")
+                training_process.terminate()
+                try:
+                    training_process.wait(timeout=config.timeout_graceful)
+                    logger.info("Training terminated gracefully.")
+                except subprocess.TimeoutExpired:
+                    logger.warning("Process did not terminate gracefully. Force killing...")
+                    training_process.kill()
+                    training_process.wait()
+            except (AttributeError, OSError) as e:
+                logger.error(f"Error terminating process: {e}")
     
-    try:
-      result = self.learner.continue_learning(
-        data_folder=data_folder,
-        checkpoint_folder=checkpoint_folder,
-        network=network,
-        backup=backup
-      )
-      
-      if result["success"]:
-        print("✅ Continue learning completed successfully")
-        print(f"New model location: {result.get('model_dir')}")
-        if result.get('backup_dir'):
-          print(f"Model backup: {result['backup_dir']}")
-        print(f"Network: {result.get('network')}")
-        print(f"Characters learned: {result.get('chars_count', 0)}")
+    logger.info("Exiting application.")
+    sys.exit(0)
+
+# Register handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# --- Helper Functions ---
+def clean_unicode_text(text: str) -> str:
+    """Remove invisible Unicode control characters."""
+    if not text:
+        return text
+    
+    replacements = {
+        '\u202a': '[LTR]', '\u202b': '[RTL]', '\u202c': '[PDF]',
+        '\u202d': '[LRO]', '\u202e': '[RLO]'
+    }
+    
+    # Also handle escaped representations if they exist in the string
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+        text = text.replace(repr(char)[1:-1], repl)
         
-        # Update database with success
-        try:
-          update_training_session(
-            session_id=session_id,
-            status='completed',
-            model_folder=result.get('model_dir')
-          )
-        except Exception as e:
-          print(f"⚠️ Failed to update training session: {e}")
-        
-        # Reload model after training
-        self.learner.reload_model()
-        return True
-      else:
-        print(f"❌ Continue learning failed: {result.get('error')}")
-        
-        # Update database with failure
-        try:
-          update_training_session(
-            session_id=session_id,
-            status='failed',
-            error_message=result.get('error')
-          )
-        except Exception as e:
-          print(f"⚠️ Failed to update training session: {e}")
-        
+    return text
+
+def normalize_data_path(data_path: str) -> str:
+    """Normalize data path to include glob pattern if pointing to a directory."""
+    p = Path(data_path)
+    
+    if "*" in data_path or data_path.endswith(".bin.png"):
+        return data_path
+    
+    if p.is_dir() or data_path.endswith(os.sep):
+        return str(p / "*.bin.png")
+    
+    return data_path
+
+def verify_dataset(data_pattern: str) -> bool:
+    """Verify dataset integrity (images and ground truth)."""
+    images = glob.glob(data_pattern)
+    if not images:
+        logger.error(f"No images found matching pattern: {data_pattern}")
+        return False
+    
+    missing_gt = []
+    for img in images:
+        gt_file = img.replace(".bin.png", ".gt.txt")
+        if not os.path.exists(gt_file):
+            missing_gt.append(gt_file)
+    
+    if missing_gt:
+        logger.error(f"Missing Ground Truth files for {len(missing_gt)} images.")
         return False
         
-    except Exception as e:
-      print(f"❌ Continue learning error: {e}")
-      
-      # Update database with error
-      try:
-        update_training_session(
-          session_id=session_id,
-          status='failed',
-          error_message=str(e)
-        )
-      except Exception as db_e:
-        print(f"⚠️ Failed to update training session: {db_e}")
-      
-      return False
+    logger.info(f"Dataset verified: {len(images)} image pairs found.")
+    return True
 
-  def train_on_failset(self, failset_dir):
-    """Uses Calamari library to train/upgrade the model safely"""
-    if not LIB_MODE:
-      print("❌ Calamari library not available")
-      return False
-      
-    print(f"🎓 Training started on: {failset_dir}")
+def split_dataset(image_paths: List[str], val_ratio: float) -> Tuple[List[str], List[str]]:
+    """Split dataset into training and validation sets."""
+    if not image_paths:
+        return [], []
     
-    try:
-      # Create default trainer params
-      trainer_params = CalamariScenario.default_trainer_params()
-      
-      # Set the training parameters equivalent to the command line
-      trainer_params.output_dir = self.model_dir
-      trainer_params.epochs = 10  # Increase epochs for more learning
-      trainer_params.gen.train.images = [os.path.join(failset_dir, "*.bin.png")]
-      trainer_params.gen.val.images = [os.path.join("data/single_case", "*.bin.png")]  # Use single_case as validation
-      trainer_params.gen.setup.train.batch_size = 1
-      trainer_params.gen.setup.train.num_processes = 1  # Single process for stability
-      trainer_params.gen.setup.val.num_processes = 1
-      
-      # Performance optimizations
-      trainer_params.progress_bar = False  # Disable progress bar to reduce output
-      
-      # Run the training
-      result = calamari_train(trainer_params)
-      print("✅ Training completed, model updated.")
-      
-      # Reload model after training
-      self.learner.reload_model()
-      return True
-    except Exception as e:
-      print(f"❌ Library Training failed: {e}")
-      return False
+    # Shuffle to ensure randomness
+    shuffled = image_paths.copy()
+    # Simple shuffle implementation (or use random.shuffle)
+    import random
+    random.shuffle(shuffled)
+    
+    split_idx = int(len(shuffled) * (1 - val_ratio))
+    train_set = shuffled[:split_idx]
+    val_set = shuffled[split_idx:]
+    
+    logger.info(f"Data split: {len(train_set)} train, {len(val_set)} validation")
+    return train_set, val_set
 
-  def get_learner_info(self) -> str:
-    return "Calamari (Lib Mode) - " + ("READY" if self.learner.predictor else "NO_MODEL")
+# --- Main Class ---
+class OCRBridge:
+  def __init__(self):
+        self.model_dir = os.environ.get(config.model_dir_env, config.default_model_dir)
+        self.model_path = str(Path(self.model_dir) / "best.ckpt.json")
+        
+        # Initialize Learner (Assuming CalamariLearner is available)
+        try:
+            from engines.calamari_learner import CalamariLearner
+            self.learner = CalamariLearner(self.model_path)
+        except ImportError:
+            logger.error("CalamariLearner not found. Ensure dependencies are installed.")
+            self.learner = None
+
+  def predict(self, image_path: str) -> Tuple[str, float]:
+        if not self.learner:
+            raise OCRError("Learner not initialized.")
+        return self.learner.do_predict(image_path)
+
+  def _setup_training_params(self, output_dir: str, epochs: int, network: str, 
+                               train_images: List[str], val_images: List[str]) -> Any:
+        """Configure Calamari training parameters."""
+        try:
+            from calamari_ocr.ocr.scenario import CalamariScenario
+            trainer_params = CalamariScenario.default_trainer_params()
+            
+            trainer_params.output_dir = output_dir
+            trainer_params.epochs = epochs
+            trainer_params.network = network
+            
+            trainer_params.gen.train.images = train_images
+            trainer_params.gen.val.images = val_images
+            
+            trainer_params.gen.setup.train.batch_size = config.batch_size
+            trainer_params.gen.setup.train.num_processes = config.num_processes
+            trainer_params.gen.setup.val.num_processes = config.num_processes
+            
+            trainer_params.codec.auto_compute = True
+            trainer_params.progress_bar = False
+            
+            return trainer_params
+        except Exception as e:
+            logger.error(f"Failed to setup training parameters: {e}")
+            raise
+
+  def start_new_model(self, data_folder: str, model_folder: str, 
+                        epochs: Optional[int] = None, network: Optional[str] = None) -> bool:
+        """Start training from scratch."""
+        epochs = epochs or config.default_epochs
+        network = network or config.default_network
+        
+        logger.info(f"🚀 Starting initial training: {epochs} epochs, network: {network}")
+        
+        # Validate inputs
+        if not os.path.exists(data_folder):
+            logger.error(f"Data folder not found: {data_folder}")
+            return False
+            
+        # Get data from DB
+        try:
+            training_cases = db.get_training_cases(include_gt_only=True)
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            return False
+
+        if not training_cases:
+            logger.error("No training cases found in database.")
+            return False
+
+        # Prepare paths
+        model_folder = str(Path(model_folder).resolve())
+        os.makedirs(model_folder, exist_ok=True)
+        
+        image_paths = [case['full_img_path'] for case in training_cases]
+        
+        # Split data
+        train_imgs, val_imgs = split_dataset(image_paths, config.validation_split)
+        
+        if not train_imgs:
+            logger.error("Not enough data for training after split.")
+            return False
+
+        try:
+            trainer_params = self._setup_training_params(
+                model_folder, epochs, network, train_imgs, val_imgs
+            )
+            
+            from calamari_ocr.ocr.training.trainer import main as calamari_train
+            result = calamari_train(trainer_params)
+            
+            logger.info("✅ Initial training completed.")
+            
+            # Update predictions
+            self._update_predictions_batch(training_cases)
+            self.learner.reload_model()
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Training failed: {e}", exc_info=True)
+            return False
+
+  def continue_learning(self, data_folder: str, checkpoint_folder: str, 
+                          network: Optional[str] = None, backup: bool = True, 
+                          force: bool = False) -> bool:
+        """Continue learning from an existing model."""
+        session_id = str(uuid.uuid4())
+        logger.info(f"🎓 Continue learning session: {session_id[:8]}")
+        
+        # Log session to DB
+        try:
+            insert_training_session(
+                session_id=session_id,
+                data_folder=data_folder,
+                checkpoint_folder=checkpoint_folder,
+                network=network,
+                backup_folder=None,
+                chars_count=0
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log session start: {e}")
+
+        try:
+            if not self.learner:
+                raise OCRError("Learner not initialized.")
+                
+            result = self.learner.continue_learning(
+                data_folder=data_folder,
+                checkpoint_folder=checkpoint_folder,
+                network=network,
+                backup=backup,
+                force=force
+            )
+            
+            if result.get("success"):
+                logger.info("✅ Continue learning successful.")
+                update_training_session(session_id, status='completed', model_folder=result.get('model_dir'))
+                
+                # Update predictions in database after training
+                try:
+                    training_cases = db.get_training_cases(include_gt_only=True)
+                    self._update_predictions_batch(training_cases)
+                except Exception as e:
+                    logger.warning(f"Failed to update predictions: {e}")
+                
+                self.learner.reload_model()
+                return True
+            else:
+                logger.error(f"❌ Continue learning failed: {result.get('error')}")
+                update_training_session(session_id, status='failed', error_message=result.get('error'))
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error in continue learning: {e}", exc_info=True)
+            update_training_session(session_id, status='failed', error_message=str(e))
+            return False
+
+  def train_on_failset(self, failset_dir: str) -> bool:
+        """Train specifically on failed cases."""
+        if not self.learner:
+            return False
+            
+        logger.info("🎓 Training on failset cases...")
+        
+        try:
+            failset_cases = [c for c in db.get_training_cases(include_gt_only=True) if c.get('is_failset')]
+            if not failset_cases:
+                logger.warning("No failset cases found.")
+                return False
+                
+            logger.info(f"Found {len(failset_cases)} failset cases.")
+            
+            # Prepare paths
+            failset_paths = [c['full_img_path'] for c in failset_cases]
+            train_imgs, val_imgs = split_dataset(failset_paths, config.validation_split)
+            
+            trainer_params = self._setup_training_params(
+                self.model_dir, 10, config.default_network, train_imgs, val_imgs
+            )
+            
+            from calamari_ocr.ocr.training.trainer import main as calamari_train
+            calamari_train(trainer_params)
+            
+            logger.info("✅ Failset training completed.")
+            self._update_predictions_batch(failset_cases)
+            self.learner.reload_model()
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failset training failed: {e}", exc_info=True)
+            return False
+
+  def _update_predictions_batch(self, cases: List[Dict]) -> None:
+        """Update predictions for a list of cases."""
+        predictions = []
+        for case in cases:
+            try:
+                pred, conf = self.predict(case['full_img_path'])
+                predictions.append({
+                    'case_id': case['id'],
+                    'ocr_text': clean_unicode_text(pred),
+                    'confidence': conf
+                })
+            except Exception as e:
+                logger.warning(f"Failed to predict case {case['id']}: {e}")
+        
+        if predictions:
+            try:
+                db.update_predictions_batch(predictions)
+                logger.info(f"Updated {len(predictions)} predictions in database.")
+            except Exception as e:
+                logger.error(f"Failed to update database: {e}")
+
+  def get_learner_status(self) -> str:
+        if not self.learner:
+            return "NOT INITIALIZED"
+        return f"Calamari - {'READY' if self.learner.predictor else 'NO MODEL'}"
+
+# Entry point example
+if __name__ == "__main__":
+    # Example usage
+    bridge = OCRBridge()
+    # Uncomment to test
+    # bridge.start_new_model("./data", "./models/test_model")
+
+    

@@ -1,3 +1,7 @@
+# Before doing anything
+- Read all the files that are given as rule
+- In case of doubt, don't start working before resolving the doubt
+
 # Running python files
 - **Strictly use Virtual Environments**: The Virtual Environment is in the folder venv_310
 - **Script Parameters**: Agent must check what arguments are appropriate for the script actually run.

@@ -34,17 +34,25 @@ class CalamariLearner(LearnerInterface):
       predictions = list(self.predictor.predict_raw([image_np]))
       
       if predictions and len(predictions) > 0:
-        # Debug: print the structure
         pred = predictions[0]
-        print(f"Debug: pred type={type(pred)}, outputs type={type(pred.outputs)}")
-        if hasattr(pred.outputs, '__len__') and len(pred.outputs) > 0:
-          best_guess = pred.outputs[0]
-          print(f"Debug: best_guess type={type(best_guess)}")
-          return best_guess.sentence, best_guess.avg_char_probability
+        # Handle different output formats
+        if hasattr(pred, 'outputs'):
+          outputs = pred.outputs
+          if isinstance(outputs, list) and len(outputs) > 0:
+            best_guess = outputs[0]
+            if hasattr(best_guess, 'sentence'):
+              return best_guess.sentence, best_guess.avg_char_probability
+            elif hasattr(best_guess, 'prediction'):
+              return best_guess.prediction, getattr(best_guess, 'avg_char_probability', 0.0)
+          else:
+            return "ERROR", 0.0
+        elif hasattr(pred, 'sentence'):
+          return pred.sentence, getattr(pred, 'avg_char_probability', 0.0)
         else:
-          print(f"Debug: outputs content: {pred.outputs}")
           return "ERROR", 0.0
-        
+      else:
+        return "ERROR", 0.0
+      
     except Exception as e:
       print(f"⚠️ OCR Error: {e}")
       return "ERROR", 0.0
@@ -72,7 +80,7 @@ class CalamariLearner(LearnerInterface):
         print(f"⚠️ Reload error: {e}")
   
   def continue_learning(self, data_folder: str, checkpoint_folder: Optional[str] = None,
-                       network: Optional[str] = None, backup: bool = True) -> Dict[str, Any]:
+                       network: Optional[str] = None, backup: bool = True, force: bool = False) -> Dict[str, Any]:
     """Continue learning using library-based engine"""
     if checkpoint_folder is None:
       checkpoint_folder = self.model_dir
@@ -81,12 +89,13 @@ class CalamariLearner(LearnerInterface):
       data_folder=data_folder,
       checkpoint_folder=checkpoint_folder,
       network=network,
-      backup=backup
+      backup=backup,
+      force=force
     )
   
   async def continue_learning_async(self, data_folder: str, checkpoint_folder: Optional[str] = None,
                                    network: Optional[str] = None, backup: bool = True,
-                                   progress_callback: Optional[callable] = None) -> Dict[str, Any]:
+                                   progress_callback: Optional[callable] = None, force: bool = False) -> Dict[str, Any]:
     """Async continue learning using library-based engine"""
     if checkpoint_folder is None:
       checkpoint_folder = self.model_dir
@@ -96,7 +105,8 @@ class CalamariLearner(LearnerInterface):
       checkpoint_folder=checkpoint_folder,
       network=network,
       backup=backup,
-      progress_callback=progress_callback
+      progress_callback=progress_callback,
+      force=force
     )
   
   def get_learning_engine(self) -> ContinueLearningEngine:

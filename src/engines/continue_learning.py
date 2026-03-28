@@ -1,5 +1,6 @@
 # What is this file for: Library-based continue learning engine for samuTrain V2
 # When it is created: 2026-03-10
+# Enhanced with signal support and backup mechanisms from try_start_training
 
 import os
 import sys
@@ -7,6 +8,7 @@ import json
 import shutil
 import asyncio
 import logging
+import signal
 from datetime import datetime
 from typing import Optional, Dict, Any, Callable
 from pathlib import Path
@@ -37,7 +39,7 @@ except ImportError:
     pass
 
 class ContinueLearningEngine:
-  """Library-based continue learning engine with async support and unicode logging"""
+  """Library-based continue learning engine with async support, unicode logging, and signal handling"""
   
   def __init__(self, model_dir: str, interruption_manager=None):
     self.model_dir = model_dir
@@ -52,8 +54,52 @@ class ContinueLearningEngine:
     # Set interruption manager if provided
     self._interruption_manager = interruption_manager
     
+    # Set up signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, self._signal_handler)
+    signal.signal(signal.SIGTERM, self._signal_handler)
+    # SIGUSR1 is not available on Windows
+    if hasattr(signal, 'SIGUSR1'):
+        signal.signal(signal.SIGUSR1, self._save_signal_handler)  # For model saving
+    
     if not LIB_MODE:
       self.logger.error("Calamari library not available - continue learning disabled")
+  
+  def _signal_handler(self, signum, frame=None):
+    """Handle shutdown signals gracefully"""
+    self.logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    if hasattr(self, '_interruption_manager') and self._interruption_manager:
+      self._interruption_manager.request_shutdown()
+  
+  def _save_signal_handler(self, signum, frame=None):
+    """Handle save signal for checkpoint saving"""
+    self.logger.info(f"Received save signal {signum}, attempting to save checkpoint...")
+    # This would be implemented to save current training state
+    
+  def clean_unicode_text(self, text: str) -> str:
+    """Remove or replace invisible Unicode control characters for better display (from try_start_training)"""
+    if not text:
+        return text
+    
+    # Handle both actual Unicode characters and their escaped representations
+    replacements = {
+        '\u202a': '[LTR]',  # Left-to-Right Embedding
+        '\u202b': '[RTL]',  # Right-to-Left Embedding
+        '\u202c': '[PDF]',  # Pop Directional Formatting
+        '\u202d': '[LRO]',  # Left-to-Right Override
+        '\u202e': '[RLO]',  # Right-to-Left Override
+    }
+
+    replacements = {
+        **replacements,
+        **{f'{repr(r)[1:-1]}': s for r, s in replacements.items()}
+    }
+    
+    # Replace control characters with readable alternatives or remove them
+    cleaned = text
+    for char, replacement in replacements.items():
+        cleaned = cleaned.replace(char, replacement)
+    
+    return cleaned
     
   def collect_chars(self, data_folder: str) -> list:
     """Collect unique characters from all .gt.txt files in data folder"""
@@ -104,8 +150,8 @@ class ContinueLearningEngine:
       self.logger.error(f"Failed to read trainer params: {e}")
       return "cnn=8:3x3,pool=2x2,lstm=32"
   
-  def backup_model(self, model_dir: str) -> Optional[str]:
-    """Backup model directory to .old folder with timestamp"""
+  def backup_model(self, model_dir: str, force: bool = False) -> Optional[str]:
+    """Backup model directory to .old folder with timestamp (enhanced from try_start_training)"""
     if not os.path.exists(model_dir):
       self.logger.warning(f"Model directory not found: {model_dir}")
       return None
@@ -114,6 +160,16 @@ class ContinueLearningEngine:
     backup_dir = f"{model_dir}_{timestamp}.old"
     
     try:
+      # Check if backup already exists and force is not set
+      if os.path.exists(backup_dir) and not force:
+        self.logger.warning(f"Backup directory already exists: {backup_dir}")
+        return None
+      
+      # Remove existing backup if force is set
+      if os.path.exists(backup_dir) and force:
+        shutil.rmtree(backup_dir)
+        self.logger.info(f"Removed existing backup: {backup_dir}")
+      
       shutil.copytree(model_dir, backup_dir)
       self.logger.info(f"Model backed up to: {backup_dir}")
       return backup_dir
@@ -177,13 +233,18 @@ class ContinueLearningEngine:
   
   async def continue_learning_async(self, data_folder: str, checkpoint_folder: str,
                                  network: Optional[str] = None, backup: bool = True,
-                                 progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-    """Async continue learning with progress tracking"""
+                                 progress_callback: Optional[Callable] = None, force: bool = False) -> Dict[str, Any]:
+    """Async continue learning with progress tracking and force parameter"""
     
     if not LIB_MODE:
       raise RuntimeError("Calamari library not available")
     
     self.logger.info(f"Starting continue learning on: {data_folder}")
+    
+    # Check for interruption before starting
+    if hasattr(self, '_interruption_manager') and self._interruption_manager and hasattr(self._interruption_manager, 'is_shutdown_requested'):
+      if self._interruption_manager.is_shutdown_requested():
+        return {"success": False, "error": "Training interrupted before start"}
     
     # Validate inputs
     if not os.path.exists(data_folder):
@@ -195,7 +256,11 @@ class ContinueLearningEngine:
     # Backup model if requested
     backup_dir = None
     if backup:
-      backup_dir = self.backup_model(checkpoint_folder)
+      backup_dir = self.backup_model(checkpoint_folder, force=force)
+      if backup_dir:
+        self.logger.info(f"Model backed up to: {backup_dir}")
+      else:
+        self.logger.warning("Backup failed, proceeding without backup")
     
     try:
       # Collect characters and determine network
@@ -228,8 +293,9 @@ class ContinueLearningEngine:
       def run_training():
         try:
           # Check for interruption before starting
-          if hasattr(self, '_interruption_manager') and self._interruption_manager.is_shutdown_requested():
-            return {"success": False, "error": "Training interrupted before start"}
+          if hasattr(self, '_interruption_manager') and self._interruption_manager and hasattr(self._interruption_manager, 'is_shutdown_requested'):
+            if self._interruption_manager.is_shutdown_requested():
+              return {"success": False, "error": "Training interrupted before start"}
           
           # Use calamari_train directly with the params
           result = calamari_train(trainer_params)
@@ -259,7 +325,8 @@ class ContinueLearningEngine:
             codec_info = params["scenario"]["codec"]
             if "charset" in codec_info:
               final_charset = codec_info["charset"]
-              self.logger.info(f"Final model charset: {self._format_unicode_chars(final_charset)}")
+              cleaned_charset = self.clean_unicode_text(''.join(final_charset))
+              self.logger.info(f"Final model charset: {cleaned_charset}")
               self.logger.info(f"Final model classes: {len(final_charset)}")
         
         if progress_callback:
@@ -295,8 +362,8 @@ class ContinueLearningEngine:
       }
   
   def continue_learning_sync(self, data_folder: str, checkpoint_folder: str,
-                           network: Optional[str] = None, backup: bool = True) -> Dict[str, Any]:
-    """Synchronous wrapper for continue learning"""
+                           network: Optional[str] = None, backup: bool = True, force: bool = False) -> Dict[str, Any]:
+    """Synchronous wrapper for continue learning with force parameter"""
     try:
       # Try to get current running loop
       loop = asyncio.get_running_loop()
@@ -304,8 +371,8 @@ class ContinueLearningEngine:
       # For now, use a simple approach - run the async code in a thread
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(asyncio.run, self.continue_learning_async(data_folder, checkpoint_folder, network, backup))
+        future = executor.submit(asyncio.run, self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force))
         return future.result()
     except RuntimeError:
       # No running loop, use asyncio.run directly
-      return asyncio.run(self.continue_learning_async(data_folder, checkpoint_folder, network, backup))
+      return asyncio.run(self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force))

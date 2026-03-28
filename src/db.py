@@ -22,7 +22,9 @@ class Database:
             confidence REAL NOT NULL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             is_corrected BOOLEAN DEFAULT FALSE,
-            is_failset BOOLEAN DEFAULT FALSE
+            is_failset BOOLEAN DEFAULT FALSE,
+            updated_flag BOOLEAN DEFAULT FALSE,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         """)
         
@@ -63,15 +65,58 @@ class Database:
         conn.commit()
         print("✅ Database tables created successfully")
         
-        # Verify tables exist
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('cases', 'training_sessions')")
-        tables = [row[0] for row in cursor.fetchall()]
-        if len(tables) == 2:
-          print("✅ Verified: 'cases' and 'training_sessions' tables exist")
-        else:
-          print(f"❌ Error: Missing tables: {tables}")
+        # Check if cases table has new columns and migrate if needed
+        cursor = conn.execute("PRAGMA table_info(cases)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'updated_flag' not in columns:
+          print("🔄 Migrating cases table to add update flags...")
+          conn.execute("ALTER TABLE cases ADD COLUMN updated_flag BOOLEAN DEFAULT FALSE")
+          conn.execute("ALTER TABLE cases ADD COLUMN last_updated DATETIME DEFAULT CURRENT_TIMESTAMP")
+          conn.commit()
+          print("✅ Cases table migration completed")
     except Exception as e:
       print(f"❌ Database initialization error: {e}")
+  
+  def batch_insert_cases(self, cases_data: List[Dict[str, Any]]) -> int:
+    """Insert multiple cases in a single transaction for better performance"""
+    if not cases_data:
+      return 0
+    
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        cursor = conn.cursor()
+        
+        # Prepare the insert statement
+        insert_stmt = """
+          INSERT INTO cases (img_path, ocr_text, model_prediction, gt_text, confidence, is_corrected, is_failset)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        # Prepare batch data
+        batch_data = []
+        for case in cases_data:
+          batch_data.append((
+            case['img_path'],
+            case['ocr_text'],
+            case.get('model_prediction', case['ocr_text']),
+            case.get('gt_text'),
+            case['confidence'],
+            case.get('is_corrected', False),
+            case.get('is_failset', False)
+          ))
+        
+        # Execute batch insert
+        cursor.executemany(insert_stmt, batch_data)
+        conn.commit()
+        
+        inserted_count = cursor.rowcount
+        print(f"✅ Batch inserted {inserted_count} new cases")
+        return inserted_count
+        
+    except Exception as e:
+      print(f"❌ Batch insert error: {e}")
+      return 0
   
   def insert_case(self, img_path: str, ocr_text: str, confidence: float, 
                   gt_text: Optional[str] = None, is_failset: bool = False, 
@@ -302,6 +347,148 @@ class Database:
       print(f"Error updating model prediction: {e}")
       return False
 
+  def get_updated_cases(self, since: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Get cases with update flags set for frontend notifications"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        if since:
+          cursor = conn.execute("""
+            SELECT * FROM cases 
+            WHERE updated_flag = TRUE AND last_updated > ?
+            ORDER BY last_updated DESC
+          """, (since,))
+        else:
+          cursor = conn.execute("""
+            SELECT * FROM cases 
+            WHERE updated_flag = TRUE
+            ORDER BY last_updated DESC
+          """)
+        
+        return [dict(row) for row in cursor.fetchall()]
+        
+    except Exception as e:
+      print(f"❌ Get updated cases error: {e}")
+      return []
+  
+  def clear_update_flags(self, case_ids: List[int]) -> bool:
+    """Clear update flags after frontend reads them"""
+    if not case_ids:
+      return True
+    
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        placeholders = ','.join('?' * len(case_ids))
+        conn.execute(f"""
+          UPDATE cases 
+          SET updated_flag = FALSE 
+          WHERE id IN ({placeholders})
+        """, case_ids)
+        conn.commit()
+        
+        print(f"✅ Cleared update flags for {len(case_ids)} cases")
+        return True
+        
+    except Exception as e:
+      print(f"❌ Clear update flags error: {e}")
+      return False
+  
+  def mark_cases_updated(self, case_ids: List[int]) -> bool:
+    """Mark cases as updated for frontend notification"""
+    if not case_ids:
+      return True
+    
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        placeholders = ','.join('?' * len(case_ids))
+        conn.execute(f"""
+          UPDATE cases 
+          SET updated_flag = TRUE, last_updated = CURRENT_TIMESTAMP
+          WHERE id IN ({placeholders})
+        """, case_ids)
+        conn.commit()
+        
+        print(f"✅ Marked {len(case_ids)} cases as updated")
+        return True
+        
+    except Exception as e:
+      print(f"❌ Mark cases updated error: {e}")
+      return False
+
+  def get_training_cases(self, include_gt_only: bool = True) -> List[Dict[str, Any]]:
+    """Get all cases for training with image paths (database-centric approach)"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        if include_gt_only:
+          cursor = conn.execute("""
+            SELECT id, img_path, gt_text, ocr_text, confidence
+            FROM cases 
+            WHERE gt_text IS NOT NULL AND gt_text != ''
+            ORDER BY id
+          """)
+        else:
+          cursor = conn.execute("""
+            SELECT id, img_path, gt_text, ocr_text, confidence
+            FROM cases 
+            ORDER BY id
+          """)
+        
+        cases = []
+        for row in cursor.fetchall():
+          case = dict(row)
+          # Convert to full path for Calamari
+          case['full_img_path'] = os.path.join(os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data'), case['img_path'])
+          cases.append(case)
+        
+        return cases
+        
+    except Exception as e:
+      print(f"❌ Get training cases error: {e}")
+      return []
+  
+  def update_predictions_batch(self, predictions: List[Dict[str, Any]]) -> bool:
+    """Batch update OCR predictions and confidence from Calamari"""
+    if not predictions:
+      return True
+    
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        cursor = conn.cursor()
+        
+        # Prepare update statement
+        update_stmt = """
+          UPDATE cases 
+          SET ocr_text = ?, model_prediction = ?, confidence = ?, updated_flag = TRUE, last_updated = CURRENT_TIMESTAMP
+          WHERE id = ?
+        """
+        
+        # Prepare batch data
+        batch_data = []
+        case_ids = []
+        for pred in predictions:
+          batch_data.append((
+            pred['ocr_text'],
+            pred.get('model_prediction', pred['ocr_text']),
+            pred['confidence'],
+            pred['case_id']
+          ))
+          case_ids.append(pred['case_id'])
+        
+        # Execute batch update
+        cursor.executemany(update_stmt, batch_data)
+        conn.commit()
+        
+        updated_count = cursor.rowcount
+        print(f"✅ Batch updated {updated_count} predictions")
+        return True
+        
+    except Exception as e:
+      print(f"❌ Batch update predictions error: {e}")
+      return False
+
   def get_statistics(self) -> Dict[str, Any]:
     """Get database statistics"""
     with sqlite3.connect(self.db_path) as conn:
@@ -313,7 +500,7 @@ class Database:
       
       cursor = conn.execute("SELECT AVG(confidence) FROM cases")
       avg_row = cursor.fetchone()
-      avg_confidence = float(avg_row[0]) if avg_row and avg_row[0] is not None else 0.0
+      avg_conf = avg_row[0] if avg_row[0] else 0
       
       cursor = conn.execute(
         "SELECT COUNT(*) FROM cases WHERE timestamp >= datetime('now', '-1 hour')"
@@ -327,11 +514,9 @@ class Database:
       return {
         "total_cases": total,
         "failset_cases": failset,
-        "avg_confidence": avg_confidence,
+        "avg_confidence": round(avg_conf, 3),
         "recent_activity": recent_activity,
         "failset_ratio": failset_ratio,
-        "total": total,
-        "failset": failset,
         "training_sessions": sessions
       }
   

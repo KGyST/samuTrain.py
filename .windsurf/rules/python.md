@@ -14,7 +14,7 @@
   - **Path Validation:** For string paths, check if the path exists and if appropriate permissions (R/W) are granted.
   - **State Validation:** If a folder must be empty for a process, include an explicit assert for it.
   - **Custom Functions:** When defining multiple items having same assertions, create a helper function to avoid code duplication.
-	- **No Trivial Assertions:** Don't assert trivial things like arument types that are defined by type hints.
+	- **No Trivial Assertions:** Don't assert trivial things like argument types that are defined by type hints.
 - **Example:**
   ```python
     def assert_empty_directory(target_path: str):
@@ -38,10 +38,15 @@
       # Logic...
       ``` 
 
-## 3. Subprocess & OS Specifics (Windows Compatibility)
-### Encoding and Safety
-- **Mandatory Encoding:** Always use encoding='utf-8' and errors='replace' for subprocess.Popen or subprocess.run.
-- **Stream Decoding:** When monitoring stdout in real-time, ensure the stream is decoded correctly (UTF-8) to avoid UnicodeDecodeError from progress bars or special characters.
+## 4. Special Scripts
+- **For Checking Out New Ideas try_ Scripts:** AI agent can create these scripts without user permission for temporary puropsoes like checking new ideas or trying out what works.
+  - Name starts with `try_`
+  - Always in the `scripts/` folder
+	- Can have a docstring at the beginning describing how it works
+	- **Small and Easy to Understand:**
+	  - Number of `print()` commands must be minimized
+    - **Happy Path:** these scripts can deal with happy path: don't have to prorgam error possibilities that are not met. Example: no need for dealing if a disk is full.
+		Ideal behavior: at first no error path handling. If runs into a specific error when the script is run, handle only that one error.
 
 ## 4. Formatting & PEP8
 ### Variable conventions
@@ -90,14 +95,29 @@
     
     return _recursee(parameter)
   ```
+- **Minimize print() commands**
+- **Exceptions:** handle exceptions only if it can make the program continue after solving the problem.
+Bad example:
+```
+try:
+  some_function_throwing_exception()
+except Exception as e: 
+  # Catching every exception, only printing happens:
+  print(f'{e} exception happened')
+```
 
 - **Clean Code:** When applicable, use Clean Code principles
   - **Create a New Function:** Organize a new function when a set of commands can be driven by a 
-    - LImited number of simple parameters
+    - Limited number of simple parameters
     - Resulting an easy to return simple result (or `None`)
 
 ## 6. FOSS Priority
 ### License and Costs
 - **Red Alert:** Strictly prefer Free and Open Source Software (FOSS).
 - **Hard Constraint:** Avoid any libraries, tools, or SaaS solutions with freemium models, paid tiers, or usage limits.
+
+## 7. Subprocess & OS Specifics (Windows Compatibility)
+### Encoding and Safety
+- **Mandatory Encoding:** Always use encoding='utf-8' and errors='replace' for subprocess.Popen or subprocess.run.
+- **Stream Decoding:** When monitoring stdout in real-time, ensure the stream is decoded correctly (UTF-8) to avoid UnicodeDecodeError from progress bars or special characters.
 
