@@ -39,14 +39,18 @@
       ``` 
 
 ## 4. Special Scripts
-- **For Checking Out New Ideas try_ Scripts:** AI agent can create these scripts without user permission for temporary puropsoes like checking new ideas or trying out what works.
+- **For Checking Out New Ideas try_ Scripts:** You can create these scripts without user permission for temporary puropsoes like checking new ideas or trying out what works.
   - Name starts with `try_`
   - Always in the `scripts/` folder
 	- Can have a docstring at the beginning describing how it works
 	- **Small and Easy to Understand:**
-	  - Number of `print()` commands must be minimized
+	  - Number of code response, including`print()` commands, logging etc. must be minimized
     - **Happy Path:** these scripts can deal with happy path: don't have to prorgam error possibilities that are not met. Example: no need for dealing if a disk is full.
 		Ideal behavior: at first no error path handling. If runs into a specific error when the script is run, handle only that one error.
+	- **test_ Script as Contracts:** if a `try_` script is ran, You have to create a `test_` script having the same name calling the `try_` script with the parametrization You use for testing
+	  - After every modification You will have to run the `test_` script and checking the proper working using the previous parameters
+		  - If the expected parametrization changes, You have to modify the `test_` script accordingly
+		  - If the modification brings back a new use case, You have to add this new use case to the `test_` script
 
 ## 4. Formatting & PEP8
 ### Variable conventions
@@ -67,8 +71,28 @@
 		- NEVER use non-English character in variable names.
 
 ### Constants and literals
-- **Constants:** UPPER_SNAKE_CASE for constants and literals. For short names, leading/trailing underscores are ok, like `_A_` 
-- **Literals:** if a literal is used at least 2 times and instances are logically the same, use a constant
+- **Constants:** UPPER_SNAKE_CASE for constants and literals. For short names, leading/trailing underscores are ok, like `_A_`
+- **Literals:** if a literal is used at least 2 times and instances are logically the same, use a constant.
+  - No single character literals to be constanted
+  Good Examples:
+  ```python
+			# "UTF-8" being a common constant.
+			UTF_8 = 'utf-8'
+			# A commonly used file extension; used more in the script:
+			BIN_PNG = ".bin.png"
+			
+	    sys.stdout = codecs.getwriter(UTF_8)(sys.stdout.detach())
+  ```
+	
+  Bad Examples:
+  ```python
+			# A single character, the constant name is much longer than the literal itself (harder to read):
+			EMOJI_GEAR = "🔧"
+			
+			# A not needed print() statement forcing a string building because of the constant:
+			# See: Number of `print()` commands must be minimized
+			print(f"{EMOJI_GEAR} some text")
+  ```
 
 ### Comments and Documentation
 - **Line Placement:** Comments must be on their own lines. Inline comments are strictly forbidden.
@@ -95,9 +119,33 @@
     
     return _recursee(parameter)
   ```
-- **Minimize print() commands**
+- **No AI Yapping**
+  - Minimize number of `print()` commands, log texts and similar
+  **Good Example**:
+  ```python
+  def validate_data(path: str) -> bool:
+      assert os.path.exists(path), f"Path {path} does not exist"
+
+      return os.path.exists(path)
+  ```
+
+  **Bad Example**:
+  ```python
+  def validate_data(path: str) -> bool:
+      print("Checking path...")
+      if os.path.exists(path):
+          print("Path exists")
+          return True
+      print("Path missing")
+      return False
+  ```
 - **Exceptions:** handle exceptions only if it can make the program continue after solving the problem.
-Bad example:
+**Good example**:
+```
+some_function_throwing_exception()
+```
+
+**Bad example**:
 ```
 try:
   some_function_throwing_exception()
