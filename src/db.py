@@ -3,6 +3,45 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+
+def _resolve_case_image_file(img_path: str) -> str:
+  """Resolve on-disk path for a case image using SAMUTRAIN_DATA_FOLDER.
+
+  Supports: path under data folder, path relative to data parent (e.g. 64_case/foo.png),
+  and basename-only rows when the file lives in a sibling dataset folder (e.g. single_case
+  env but images under data/64_case/).
+  """
+  sep_img = img_path.replace("/", os.sep)
+  data_folder = os.path.normpath(
+    os.path.abspath(os.environ.get("SAMUTRAIN_DATA_FOLDER", "data"))
+  )
+  parent_data = os.path.dirname(data_folder)
+
+  direct = os.path.join(data_folder, sep_img)
+  if os.path.isfile(direct):
+    return direct
+
+  if parent_data and os.path.isdir(parent_data):
+    under_parent = os.path.normpath(os.path.join(parent_data, sep_img))
+    if os.path.isfile(under_parent):
+      return under_parent
+
+  base_only = os.path.basename(sep_img)
+  if parent_data and os.path.isdir(parent_data) and base_only == sep_img:
+    try:
+      for name in sorted(os.listdir(parent_data)):
+        subdir = os.path.join(parent_data, name)
+        if not os.path.isdir(subdir):
+          continue
+        candidate = os.path.join(subdir, base_only)
+        if os.path.isfile(candidate):
+          return candidate
+    except OSError:
+      pass
+
+  return direct
+
+
 class Database:
   def __init__(self, db_path: str = "samu.db"):
     self.db_path = db_path
@@ -439,8 +478,7 @@ class Database:
         cases = []
         for row in cursor.fetchall():
           case = dict(row)
-          # Convert to full path for Calamari
-          case['full_img_path'] = os.path.join(os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data'), case['img_path'])
+          case["full_img_path"] = _resolve_case_image_file(case["img_path"])
           cases.append(case)
         
         return cases

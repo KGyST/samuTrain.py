@@ -29,6 +29,38 @@
                 "PYTHONWARNINGS": "ignore",
                 "CALAMARI_LOG_LEVEL": "ERROR"
             }
+        },
+        {
+            "name": "Test Backend Learning Validation",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_validate_backend_learning.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/venv_310/Scripts/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}",
+                "TF_CPP_MIN_LOG_LEVEL": "3",
+                "PYTHONWARNINGS": "ignore",
+                "CALAMARI_LOG_LEVEL": "ERROR"
+            }
+        },
+        {
+            "name": "Debug Backend Learning Validation",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/try_validate_backend_learning.py",
+            "args": ["data/single_case", "models/generic_ocr_model"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/venv_310/Scripts/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}",
+                "TF_CPP_MIN_LOG_LEVEL": "3",
+                "PYTHONWARNINGS": "ignore",
+                "CALAMARI_LOG_LEVEL": "ERROR"
+            }
         }
     ]
 }

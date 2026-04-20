@@ -29,5 +29,4 @@ A core goal of **samuTrain** is the strict separation of management logic from t
 - **Current Engine**: Calamari OCR (v2.3.1)
 - **Backend**: TensorFlow 2.15.0+
 - **Database**: Built-in `sqlite3`
-- **Coding Standard**: 2-space indentation, English-only comments, no end-of-line comments.
 

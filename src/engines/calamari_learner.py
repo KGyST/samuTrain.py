@@ -29,35 +29,48 @@ class CalamariLearner(LearnerInterface):
       image = Image.open(image_path).convert('L')
       image_np = np.array(image)
 
-      # Calamari 2.2 API: returns a list of Prediction objects
-      # Each Prediction has an 'outputs' list containing PredictionResult objects
+      # predict_raw yields tfaip Sample objects; Sample.outputs is often
+      # (list[PredictionResult], voted Prediction) — not a list of results.
       predictions = list(self.predictor.predict_raw([image_np]))
-      
-      if predictions and len(predictions) > 0:
-        pred = predictions[0]
-        # Handle different output formats
-        if hasattr(pred, 'outputs'):
-          outputs = pred.outputs
-          if isinstance(outputs, list) and len(outputs) > 0:
-            best_guess = outputs[0]
-            if hasattr(best_guess, 'sentence'):
-              return best_guess.sentence, best_guess.avg_char_probability
-            elif hasattr(best_guess, 'prediction'):
-              return best_guess.prediction, getattr(best_guess, 'avg_char_probability', 0.0)
-          else:
-            return "ERROR", 0.0
-        elif hasattr(pred, 'sentence'):
-          return pred.sentence, getattr(pred, 'avg_char_probability', 0.0)
-        else:
-          return "ERROR", 0.0
-      else:
+
+      if not predictions:
         return "ERROR", 0.0
-      
+
+      sample = predictions[0]
+      outs = getattr(sample, "outputs", None)
+      if outs is not None:
+        if isinstance(outs, tuple) and len(outs) > 0:
+          pr_list = outs[0]
+          if isinstance(pr_list, list) and len(pr_list) > 0:
+            bg = pr_list[0]
+            if hasattr(bg, "sentence"):
+              pobj = getattr(bg, "prediction", None)
+              conf = float(getattr(pobj, "avg_char_probability", 0.0) or 0.0) if pobj else 0.0
+              return bg.sentence, conf
+          if len(outs) >= 2 and outs[1] is not None:
+            vote_p = outs[1]
+            if hasattr(vote_p, "sentence") and vote_p.sentence:
+              return vote_p.sentence, float(getattr(vote_p, "avg_char_probability", 0.0) or 0.0)
+        if isinstance(outs, list) and len(outs) > 0:
+          best_guess = outs[0]
+          if hasattr(best_guess, "sentence"):
+            conf = float(getattr(best_guess, "avg_char_probability", 0.0) or 0.0)
+            return best_guess.sentence, conf
+          if hasattr(best_guess, "prediction"):
+            pobj = best_guess.prediction
+            return (
+              getattr(pobj, "sentence", "") or "",
+              float(getattr(pobj, "avg_char_probability", 0.0) or 0.0),
+            )
+
+      if hasattr(sample, "sentence") and sample.sentence is not None:
+        return sample.sentence, float(getattr(sample, "avg_char_probability", 0.0) or 0.0)
+
+      return "ERROR", 0.0
+
     except Exception as e:
       print(f"⚠️ OCR Error: {e}")
       return "ERROR", 0.0
-      
-    return ("", 0.0)
 
   def is_available(self) -> bool:
     return os.path.exists(self.model_path)

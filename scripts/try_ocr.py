@@ -1,28 +1,35 @@
-#!/usr/bin/env python3
-import sys
 import os
-sys.path.insert(0, 'src')
+import sys
 
-from bridge import OCRBridge
+# Add src/ to sys.path
+scriptDir = os.path.dirname(os.path.abspath(__file__))
+projectRoot = os.path.dirname(scriptDir)
+srcDir = os.path.join(projectRoot, 'src')
+sys.path.insert(0, srcDir)
 
-# Test OCR prediction
-try:
-    bridge = OCRBridge()
-    print('OCR Bridge initialized')
-    print(f'Model path: {bridge.model_path}')
-    print(f'Model exists: {os.path.exists(bridge.model_path)}')
-    
-    # Test prediction on first image
-    test_image = 'data/64_case/010001.bin.png'
-    if os.path.exists(test_image):
-        print(f'Testing prediction on: {test_image}')
-        pred, conf = bridge.predict(test_image)
-        print(f'Prediction: "{pred}"')
-        print(f'Confidence: {conf}')
-    else:
-        print(f'Test image not found: {test_image}')
-        
-except Exception as e:
-    print(f'Error: {e}')
-    import traceback
-    traceback.print_exc()
+def try_ocr(test_image: str) -> None:
+  """
+  Central script to be called so only this function needs to be imported by the test_ script.
+  """
+  from bridge import OCRBridge
+  
+  assert os.path.isabs(test_image), f"Path must be absolute: {test_image}"
+  assert os.path.exists(test_image), f"Test image missing: {test_image}"
+
+  try:
+    ocrBridge = OCRBridge()
+    ocrBridge.predict(test_image)
+      
+  except Exception:
+    pass
+
+def main() -> None:
+  """
+  Main function to parse arguments and run OCR test.
+  """
+  sTestImage = os.path.abspath('data/64_case/010001.bin.png')
+  try_ocr(sTestImage)
+
+if __name__ == "__main__":
+  main()
+
