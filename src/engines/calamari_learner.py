@@ -93,7 +93,8 @@ class CalamariLearner(LearnerInterface):
         print(f"⚠️ Reload error: {e}")
   
   def continue_learning(self, data_folder: str, checkpoint_folder: Optional[str] = None,
-                       network: Optional[str] = None, backup: bool = True, force: bool = False) -> Dict[str, Any]:
+                       network: Optional[str] = None, backup: bool = True,
+                       force: bool = False, epochs: Optional[int] = None) -> Dict[str, Any]:
     """Continue learning using library-based engine"""
     if checkpoint_folder is None:
       checkpoint_folder = self.model_dir
@@ -103,12 +104,14 @@ class CalamariLearner(LearnerInterface):
       checkpoint_folder=checkpoint_folder,
       network=network,
       backup=backup,
-      force=force
+      force=force,
+      epochs=epochs
     )
   
   async def continue_learning_async(self, data_folder: str, checkpoint_folder: Optional[str] = None,
                                    network: Optional[str] = None, backup: bool = True,
-                                   progress_callback: Optional[callable] = None, force: bool = False) -> Dict[str, Any]:
+                                   progress_callback: Optional[callable] = None,
+                                   force: bool = False, epochs: Optional[int] = None) -> Dict[str, Any]:
     """Async continue learning using library-based engine"""
     if checkpoint_folder is None:
       checkpoint_folder = self.model_dir
@@ -119,7 +122,8 @@ class CalamariLearner(LearnerInterface):
       network=network,
       backup=backup,
       progress_callback=progress_callback,
-      force=force
+      force=force,
+      epochs=epochs
     )
   
   def get_learning_engine(self) -> ContinueLearningEngine:

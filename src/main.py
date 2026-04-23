@@ -28,7 +28,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 DATA_FOLDER = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
 db = Database()
-ocr_bridge = OCRBridge()
+ocr_bridge = OCRBridge(db)
 
 def normalize_data_path(data_path):
     """Normalize data path with glob pattern (from try_start_training)"""
@@ -200,7 +200,8 @@ def shutdown_training():
         data_folder=train_dir,
         checkpoint_folder=ocr_bridge.model_dir,
         network=None,  # Auto-detect based on data
-        backup=False   # Don't backup during shutdown
+        backup=False,  # Don't backup during shutdown
+        epochs=1
       )
       
       if success:
@@ -464,7 +465,8 @@ async def train_new_model(request: Request):
           data_folder=data_folder,
           checkpoint_folder=model_folder,
           network=network,
-          backup=True
+          backup=True,
+          epochs=epochs
         )
         
         if continue_success:
@@ -506,6 +508,7 @@ async def continue_learning(request: Request):
     network = data.get('network')
     backup = data.get('backup', True)
     force = data.get('force', False)  # New parameter from try_start_training
+    epochs = data.get('epochs')
     
     if not data_folder:
       return {"success": False, "detail": "data_folder is required"}
@@ -521,7 +524,8 @@ async def continue_learning(request: Request):
       checkpoint_folder=checkpoint_folder,
       network=network,
       backup=backup,
-      force=force  # Pass force parameter
+      force=force,  # Pass force parameter
+      epochs=epochs
     )
     
     return {"success": success}
@@ -550,6 +554,74 @@ async def correct_case(case_id: int, request: Request):
     else:
       return {"success": False, "detail": "Failed to save correction"}
   except Exception as e:
+    return {"success": False, "detail": str(e)}
+
+@app.post("/api/demo/learning")
+async def run_learning_demo(request: Request):
+  """Run the learning demonstration script"""
+  try:
+    import subprocess
+    import sys
+    
+    data = await request.json()
+    data_folder = data.get('data_folder', 'data/64_case')
+    model_folder = data.get('model_folder', 'models/generic_ocr_model_3')
+    epochs = data.get('epochs', 1)
+    
+    # Get script path
+    script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                              'scripts', 'try_learning_demo.py')
+    
+    if not os.path.exists(script_path):
+      return {"success": False, "detail": "Demo script not found"}
+    
+    # Prepare command
+    cmd = [
+      sys.executable, script_path, 
+      data_folder, model_folder, 
+      '--epochs', str(epochs)
+    ]
+    
+    print(f"🚀 Starting learning demo: {' '.join(cmd)}")
+    
+    # Run the demo script
+    try:
+      result = subprocess.run(
+        cmd, 
+        capture_output=True, 
+        text=True, 
+        timeout=300,  # 5 minute timeout
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+      )
+      
+      print(f"Demo completed with return code: {result.returncode}")
+      if result.stdout:
+        print(f"Demo stdout: {result.stdout[:500]}...")
+      if result.stderr:
+        print(f"Demo stderr: {result.stderr[:500]}...")
+      
+      if result.returncode == 0:
+        return {
+          "success": True, 
+          "message": "Learning demo completed successfully",
+          "stdout": result.stdout,
+          "stderr": result.stderr
+        }
+      else:
+        return {
+          "success": False, 
+          "detail": f"Demo failed with return code {result.returncode}",
+          "stdout": result.stdout,
+          "stderr": result.stderr
+        }
+        
+    except subprocess.TimeoutExpired:
+      return {"success": False, "detail": "Demo timed out after 5 minutes"}
+    except Exception as e:
+      return {"success": False, "detail": f"Failed to run demo: {str(e)}"}
+      
+  except Exception as e:
+    print(f"❌ Demo API error: {e}")
     return {"success": False, "detail": str(e)}
 
 # --- UI KISZOLGÁLÁS FIXÁLÁSA ---

@@ -178,7 +178,7 @@ class ContinueLearningEngine:
       return None
   
   def create_trainer_params(self, data_folder: str, checkpoint_folder: str, 
-                          network: str, chars: list, new_model_dir: str) -> TrainerParams:
+                          network: str, chars: list, new_model_dir: str, epochs: int = 5) -> TrainerParams:
     """Create TrainerParams with all prototype parameters using library API"""
     
     # Get default trainer params
@@ -186,7 +186,7 @@ class ContinueLearningEngine:
     
     # Set basic parameters
     trainer_params.output_dir = new_model_dir
-    trainer_params.epochs = 100
+    trainer_params.epochs = epochs
     trainer_params.auto_upgrade_checkpoints = True
     trainer_params.network = network
     
@@ -233,11 +233,14 @@ class ContinueLearningEngine:
   
   async def continue_learning_async(self, data_folder: str, checkpoint_folder: str,
                                  network: Optional[str] = None, backup: bool = True,
-                                 progress_callback: Optional[Callable] = None, force: bool = False) -> Dict[str, Any]:
+                                 progress_callback: Optional[Callable] = None, force: bool = False,
+                                 epochs: Optional[int] = None) -> Dict[str, Any]:
     """Async continue learning with progress tracking and force parameter"""
     
     if not LIB_MODE:
       raise RuntimeError("Calamari library not available")
+    if epochs is not None:
+      assert epochs > 0, f"epochs must be positive, got {epochs}"
     
     self.logger.info(f"Starting continue learning on: {data_folder}")
     
@@ -279,9 +282,10 @@ class ContinueLearningEngine:
       new_model_dir = f"{checkpoint_folder}_extended_{timestamp}"
       os.makedirs(new_model_dir, exist_ok=True)
       
-      # Create trainer parameters
+      # Keep default short for try_ scripts, but allow explicit epoch control.
+      epochs = epochs or 1
       trainer_params = self.create_trainer_params(
-        data_folder, checkpoint_folder, network, chars, new_model_dir
+        data_folder, checkpoint_folder, network, chars, new_model_dir, epochs
       )
       
       if progress_callback:
@@ -362,7 +366,8 @@ class ContinueLearningEngine:
       }
   
   def continue_learning_sync(self, data_folder: str, checkpoint_folder: str,
-                           network: Optional[str] = None, backup: bool = True, force: bool = False) -> Dict[str, Any]:
+                           network: Optional[str] = None, backup: bool = True,
+                           force: bool = False, epochs: Optional[int] = None) -> Dict[str, Any]:
     """Synchronous wrapper for continue learning with force parameter"""
     try:
       # Try to get current running loop
@@ -371,8 +376,13 @@ class ContinueLearningEngine:
       # For now, use a simple approach - run the async code in a thread
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(asyncio.run, self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force))
+        future = executor.submit(
+          asyncio.run,
+          self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force, epochs)
+        )
         return future.result()
     except RuntimeError:
       # No running loop, use asyncio.run directly
-      return asyncio.run(self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force))
+      return asyncio.run(
+        self.continue_learning_async(data_folder, checkpoint_folder, network, backup, None, force, epochs)
+      )

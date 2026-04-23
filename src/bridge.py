@@ -435,7 +435,7 @@ class OCRBridge:
 
   def continue_learning(self, data_folder: str, checkpoint_folder: str, 
                         network: Optional[str] = None, backup: bool = True, 
-                        force: bool = False) -> bool:
+                        force: bool = False, epochs: Optional[int] = None) -> bool:
     """Continue learning from an existing model."""
     assert isinstance(data_folder, str), f"data_folder must be string, got {type(data_folder)}"
     assert isinstance(checkpoint_folder, str), f"checkpoint_folder must be string, got {type(checkpoint_folder)}"
@@ -455,7 +455,8 @@ class OCRBridge:
         checkpoint_folder=checkpoint_folder,
         network=network,
         backup=backup,
-        force=force
+        force=force,
+        epochs=epochs
       )
 
       if result.get("success"):

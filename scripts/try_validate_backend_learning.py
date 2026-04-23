@@ -136,7 +136,7 @@ def validate_learning_workflow(data_folder: str, model_folder: str) -> bool:
     return False
 
   try:
-    bridge = OCRBridge()
+    bridge = OCRBridge(db)
   except Exception:
     return False
 

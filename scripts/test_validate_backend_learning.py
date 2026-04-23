@@ -10,13 +10,13 @@ project_root = os.path.dirname(script_dir)
 sys.path.insert(0, project_root)
 sys.path.insert(0, script_dir)
 
-from try_validate_backend_learning import validate_backend_learning
+from try_validate_backend_learning import validate_learning_workflow
 
 def test_validate_backend_learning():
   """Test the validate_backend_learning function with different parameters"""
   
   # Test case 1: Basic validation with single_case data
-  validate_backend_learning(
+  validate_learning_workflow(
     os.path.join(project_root, "data/single_case"), 
     os.path.join(project_root, "models/generic_ocr_model")
   )

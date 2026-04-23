@@ -296,8 +296,11 @@ if __name__ == "__main__":
             print("\n🤖 Auto-continuation enabled, proceeding...")
             # Import here to avoid circular imports
             from bridge import OCRBridge
-            ocr_bridge = OCRBridge()
-            success = ocr_bridge.continue_learning(args.data_folder, args.model_folder, args.network)
+            from db import db
+            ocr_bridge = OCRBridge(db)
+            success = ocr_bridge.continue_learning(
+                args.data_folder, args.model_folder, args.network, epochs=args.epochs
+            )
             if success:
                 print(f"\n🎉 Complete training workflow finished! Model: {args.model_folder}")
             else:
