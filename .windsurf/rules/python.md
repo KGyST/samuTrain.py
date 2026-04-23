@@ -39,8 +39,8 @@
       ``` 
 
 ## 3. Formatting & PEP8
+
 ### Variable conventions
-  - **No AI Yapping, No Code Slop**: Don't write to console. Number of code response, including`print()` commands, logging etc. must be minimized
 - **Function argument names**: use snake_case, no Hungarian order
     - **Good examples**: `test_image`, `network`
 - **Local variables**:
@@ -92,6 +92,20 @@
 ### Code Style
 - **File Ending**: Per PEP8, ensure exactly two newlines at the end of every file/macro.
 - **Indentation**: Use 2 spaces for indentation.
+- **No AI Yapping, No Code Slop**: Don't write to console. Number of code response, including`print()` commands, logging etc. must be minimized
+- **NO Error Sallowing**: don't swallow errors that sign bad behaviour so that the program cannot run. Like mocking imports on `ImportError`
+  - **Bad Example**:
+  ```python
+	try:
+		from calamari_ocr.ocr.training.params import TrainerParams
+	except ImportError:
+		logging.error("Calamari library not available")
+		print("Calamari library not available")
+  ```
+
+  # Create dummy classes for type hints when library not available
+  class TrainerParams:
+    pass
 
 ## 4. Software Design/Architecture
 - **Minimize AI Yapping**
@@ -211,12 +225,7 @@ except Exception as e:
           main()
       ```
 
-## 6. FOSS Priority
-### License and Costs
-- **Red Alert**: Strictly prefer Free and Open Source Software (FOSS).
-- **Hard Constraint**: Avoid any libraries, tools, or SaaS solutions with freemium models, paid tiers, or usage limits.
-
-## 7. Subprocess & OS Specifics (Windows Compatibility)
+## 6. Subprocess & OS Specifics (Windows Compatibility)
 ### Encoding and Safety
 - **Mandatory Encoding**: Always use encoding='utf-8' and errors='replace' for subprocess.Popen or subprocess.run.
 - **Stream Decoding**: When monitoring stdout in real-time, ensure the stream is decoded correctly (UTF-8) to avoid UnicodeDecodeError from progress bars or special characters.

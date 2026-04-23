@@ -22,21 +22,13 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["PYTHONWARNINGS"] = "ignore"
 os.environ['CALAMARI_LOG_LEVEL'] = 'ERROR'
 
-try:
-  from calamari_ocr.ocr.training.params import TrainerParams
-  from calamari_ocr.ocr.scenario import CalamariScenario
-  from calamari_ocr.ocr.training.trainer import Trainer
-  from calamari_ocr.ocr.scenario_params import CalamariScenarioParams
-  from calamari_ocr.ocr.dataset.codec import CodecConstructionParams
-  from calamari_ocr.scripts.train import main as calamari_train
-  LIB_MODE = True
-except ImportError:
-  LIB_MODE = False
-  logging.error("Calamari library not available")
-  
-  # Create dummy classes for type hints when library not available
-  class TrainerParams:
-    pass
+from calamari_ocr.ocr.training.params import TrainerParams
+from calamari_ocr.ocr.scenario import CalamariScenario
+from calamari_ocr.ocr.training.trainer import Trainer
+from calamari_ocr.ocr.scenario_params import CalamariScenarioParams
+from calamari_ocr.ocr.dataset.codec import CodecConstructionParams
+from calamari_ocr.scripts.train import main as calamari_train
+LIB_MODE = True
 
 class ContinueLearningEngine:
   """Library-based continue learning engine with async support, unicode logging, and signal handling"""
@@ -227,7 +219,7 @@ class ContinueLearningEngine:
       self.logger.info(f"Extended charset with {len(chars)} characters")
     
     # Disable progress bar for cleaner output
-    trainer_params.progress_bar = False
+    trainer_params.progress_bar = True
     
     return trainer_params
   

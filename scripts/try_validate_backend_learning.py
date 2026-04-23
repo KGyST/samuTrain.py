@@ -30,7 +30,7 @@ sys.path.insert(0, projectRoot)
 def _configure_minimal_logging() -> None:
   os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
   os.environ["PYTHONWARNINGS"] = "ignore"
-  os.environ["CALAMARI_LOG_LEVEL"] = "ERROR"
+  # os.environ["CALAMARI_LOG_LEVEL"] = "ERROR"
   os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 
