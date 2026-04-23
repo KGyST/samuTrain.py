@@ -1,12 +1,13 @@
 # Before doing anything
 - Read all the files that are given as rule
-  - Check README.md and ARCHITECTURE.md
+  - Check README.md, ROADMAP.md and ARCHITECTURE.md
+	  - README.md: user level functionality
+		- ARCHITECTURE.md: technical description
+		- ROADMAP.md: planned version
   - .windsurf/rules/*
+
+# Python virtual environment
+- **Environment Isolation**: Use virtual environment in `venv_310`. Engine dependencies (e.g., TensorFlow 2.15.0) are confined to the `venv_310`, keeping the orchestrator's environment clean.
+- **Example Python Runner**: `cd "e:\Git\samuTrain.py"; .\venv_310\Scripts\python.exe .\scripts\try_start_training.py  data/64_case models/generic_ocr_model_3`
+	
 - In case of doubt, don't start working before resolving the doubt
-
-# Running python files
-- **Strictly use Virtual Environments**: The Virtual Environment is in the folder venv_310
-- **Script Parameters**: You must check what arguments are appropriate for the script actually run.
-- **Example Runners**:
-  - ```cd "e:\Git\samuTrain.py"; .\venv_310\Scripts\python.exe .\some_python_script.py  some_parameter```
-

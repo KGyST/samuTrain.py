@@ -107,6 +107,29 @@
       background: #cbd5e0;
     }
     
+    .btn-success {
+      background: #28a745;
+      color: white;
+    }
+    
+    .btn-success:hover {
+      background: #218838;
+    }
+    
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .btn-danger:hover {
+      background: #c82333;
+    }
+    
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    
     .checkbox-wrapper {
       display: flex;
       align-items: center;
@@ -399,6 +422,7 @@
     
     <div class="controls">
       <button class="btn btn-primary" onclick="refreshData()">🔄 Refresh Now</button>
+      <button class="btn btn-secondary" onclick="runLearningDemo()" id="demoBtn">🎯 Demo Learning</button>
       <div class="checkbox-wrapper">
         <input type="checkbox" id="failsetOnly" onchange="refreshData()">
         <label for="failsetOnly">Show failset only</label>
@@ -778,6 +802,78 @@ async function refreshData() {
           autoRefreshInterval = null;
         }
         console.log('Auto-refresh disabled');
+      }
+    }
+    
+    async function runLearningDemo() {
+      const demoBtn = document.getElementById('demoBtn');
+      const originalText = demoBtn.innerHTML;
+      
+      try {
+        // Disable button and show loading state
+        demoBtn.disabled = true;
+        demoBtn.innerHTML = '⏳ Running Demo...';
+        
+        // Stop auto-refresh during demo
+        const wasAutoRefresh = document.getElementById('autoRefresh').checked;
+        if (wasAutoRefresh) {
+          document.getElementById('autoRefresh').checked = false;
+          toggleAutoRefresh();
+        }
+        
+        console.log('🚀 Starting learning demo...');
+        
+        const response = await fetchAPI('/api/demo/learning', {
+          method: 'POST',
+          body: {
+            data_folder: 'data/64_case',
+            model_folder: 'models/generic_ocr_model_3',
+            epochs: 1
+          }
+        });
+        
+        if (response.success) {
+          demoBtn.innerHTML = '✅ Demo Completed!';
+          demoBtn.className = 'btn btn-success';
+          
+          // Show success message
+          showError('🎉 Learning demo completed successfully! Database has been updated.');
+          
+          // Refresh data to show changes
+          setTimeout(() => {
+            refreshData();
+          }, 1000);
+          
+          // Reset button after delay
+          setTimeout(() => {
+            demoBtn.disabled = false;
+            demoBtn.innerHTML = originalText;
+            demoBtn.className = 'btn btn-secondary';
+          }, 3000);
+          
+        } else {
+          throw new Error(response.detail || 'Demo failed');
+        }
+        
+      } catch (error) {
+        console.error('Demo error:', error);
+        demoBtn.innerHTML = '❌ Demo Failed';
+        demoBtn.className = 'btn btn-danger';
+        
+        showError(`❌ Demo failed: ${error.message}`);
+        
+        // Reset button after delay
+        setTimeout(() => {
+          demoBtn.disabled = false;
+          demoBtn.innerHTML = originalText;
+          demoBtn.className = 'btn btn-secondary';
+        }, 3000);
+      }
+      
+      // Restore auto-refresh if it was enabled
+      if (wasAutoRefresh) {
+        document.getElementById('autoRefresh').checked = true;
+        toggleAutoRefresh();
       }
     }
     

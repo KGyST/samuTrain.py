@@ -17,7 +17,9 @@ def try_ocr(test_image: str) -> None:
   assert os.path.exists(test_image), f"Test image missing: {test_image}"
 
   try:
-    ocrBridge = OCRBridge()
+    from db import Database
+    db = Database()
+    ocrBridge = OCRBridge(db)
     ocrBridge.predict(test_image)
       
   except Exception:
