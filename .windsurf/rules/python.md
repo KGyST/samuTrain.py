@@ -172,6 +172,7 @@ except Exception as e:
 
   print (validate_data("test"))
   ```
+  
 	- **test_ Script as Contracts**: if a `try_` script is ran, You have to create a `test_` script having the same name calling the `try_` script with the parametrization You use for testing
 	  - After every modification You will have to run the `test_` script and checking the proper working using the previous parameters
 		  - If the expected parametrization changes, You have to modify the `test_` script accordingly
