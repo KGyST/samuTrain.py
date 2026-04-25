@@ -3,14 +3,13 @@
 ## 1. Environment & Package Management
 - **No Global Installs**: Strictly forbidden to install packages to the global Python interpreter.
 - **Venv Lifecycle**:
-  - **Usage**: ALWAYS use a virtual environment (`venv`).
+  - **Usage**: **ALWAYS** use a virtual environment (`venv`).
   - **Discovery**: If no active `venv` is detected or known, **STOP** and ask the user to provide one or create it.
   - **Switching**: Before changing an existing virtual environment, **ALWAYS** ask for confirmation: *"Should I use the active environment, or create a new one?"*
 
 ## 2. Type Safety & Input Validation
 - **Type Hinting**: All function signatures shall use Python type hints for all arguments and return values if applicable.
 - **Pre-condition Asserts**: Every function shall start with `assert` statements to validate input integrity.
-  - **Type Check**: If type hints are applied, assert commands shall not check arguments' type
   - **Path Validation**: For string paths, check if the path exists and if appropriate permissions (R/W) are granted.
   - **State Validation**: If a folder must be empty for a process, include an explicit assert for it.
   - **Custom Functions**: When defining multiple items having same assertions, create a helper function to avoid code duplication.
@@ -186,7 +185,7 @@ except Exception as e:
 
   print (validate_data("test"))
   ```
-	- **test_ Script as Contracts**: if a `try_` script is ran, You have to create a `test_` script having the same name calling the `try_` script with the parametrization You use for testing
+	- **test_ Script as Contracts**: if a `try_` script is ran, You can create a `test_` script having the same name calling the `try_` script with the parametrization You use for testing
 	  - After every modification You will have to run the `test_` script and checking the proper working using the previous parameters
 		  - If the expected parametrization changes, You have to modify the `test_` script accordingly
 		  - If the modification brings back a new use case, You have to add this new use case to the `test_` script
@@ -227,6 +226,6 @@ except Exception as e:
 
 ## 6. Subprocess & OS Specifics (Windows Compatibility)
 ### Encoding and Safety
-- **Mandatory Encoding**: Always use encoding='utf-8' and errors='replace' for subprocess.Popen or subprocess.run.
+- **Mandatory Encoding**: Always use `encoding='utf-8'` and `errors='replace'` for subprocess.Popen or subprocess.run.
 - **Stream Decoding**: When monitoring stdout in real-time, ensure the stream is decoded correctly (UTF-8) to avoid UnicodeDecodeError from progress bars or special characters.
 

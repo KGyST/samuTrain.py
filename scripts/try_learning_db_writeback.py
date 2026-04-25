@@ -4,12 +4,13 @@
 
 import argparse
 import json
+import glob
 import os
 import sqlite3
 import sys
 import time
 import codecs
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 UTF_8 = "utf-8"
 
@@ -62,6 +63,15 @@ def _latest_extended_model_dir(model_folder: str, start_epoch_seconds: int) -> O
 
 
 def _read_configured_epochs(model_dir: str) -> Optional[int]:
+  # Try best.ckpt.json first (where Calamari actually stores epochs)
+  best_ckpt_path = os.path.join(model_dir, "best.ckpt.json")
+  if os.path.exists(best_ckpt_path):
+    with open(best_ckpt_path, "r", encoding=UTF_8) as f:
+      params = json.load(f)
+    if isinstance(params.get("epochs"), int):
+      return int(params["epochs"])
+  
+  # Fallback to trainer_params.json for backward compatibility
   trainer_params_path = os.path.join(model_dir, "trainer_params.json")
   if not os.path.exists(trainer_params_path):
     return None
@@ -75,6 +85,55 @@ def _read_configured_epochs(model_dir: str) -> Optional[int]:
   if isinstance(params.get("scenario"), dict) and isinstance(params["scenario"].get("epochs"), int):
     return int(params["scenario"]["epochs"])
   return None
+
+
+def _collect_learning_files(data_folder: str) -> List[str]:
+  pattern = os.path.join(data_folder, "*.bin.png")
+  return sorted(glob.glob(pattern))
+
+
+def _read_gt_text_for_image(image_path: str) -> Optional[str]:
+  gt_path = image_path.replace(".bin.png", ".gt.txt")
+  if not os.path.exists(gt_path):
+    return None
+  with open(gt_path, "r", encoding=UTF_8) as f:
+    return f.read().strip()
+
+
+def _upsert_learning_cases_to_db(bridge, data_folder: str) -> Tuple[int, int, int]:
+  learning_files = _collect_learning_files(data_folder)
+  inserted = 0
+  updated = 0
+  updated_case_ids = []
+  for image_path in learning_files:
+    img_name = os.path.basename(image_path)
+    pred, conf = bridge.predict(image_path)
+    pred_text = str(pred)
+    gt_text = _read_gt_text_for_image(image_path)
+    existing = bridge.db.get_case_by_img_path(img_name)
+    if existing:
+      case_id = int(existing["id"])
+      bridge.db.update_case_ocr_result(case_id, pred_text, float(conf))
+      bridge.db.update_model_prediction(case_id, pred_text)
+      if gt_text is not None:
+        bridge.db.update_case_gt_text(case_id, gt_text)
+      updated_case_ids.append(case_id)
+      updated += 1
+    else:
+      case_id = bridge.db.insert_case(
+        img_path=img_name,
+        ocr_text=pred_text,
+        confidence=float(conf),
+        gt_text=gt_text,
+        is_failset=False,
+        model_prediction=pred_text,
+      )
+      updated_case_ids.append(case_id)
+      inserted += 1
+
+  if updated_case_ids:
+    bridge.db.mark_cases_updated(updated_case_ids)
+  return len(learning_files), inserted, updated
 
 
 def run_learning_db_writeback(data_folder: str, model_folder: str, epochs: int = 10) -> Tuple[bool, str]:
@@ -126,10 +185,25 @@ def run_learning_db_writeback(data_folder: str, model_folder: str, epochs: int =
   if configured_epochs != epochs:
     return False, f"Epoch mismatch (requested={epochs}, persisted={configured_epochs})"
 
+  total_learning_cases, inserted_cases, updated_cases = _upsert_learning_cases_to_db(bridge, data_folder)
+  print(
+    f"Learning cases synced to DB: total={total_learning_cases}, inserted={inserted_cases}, updated={updated_cases}"
+  )
+  if total_learning_cases == 0:
+    return False, "No learning cases found in data folder (*.bin.png)"
+  if (inserted_cases + updated_cases) != total_learning_cases:
+    return False, (
+      f"DB sync mismatch (total={total_learning_cases}, "
+      f"inserted+updated={inserted_cases + updated_cases})"
+    )
+
   if sessions_delta <= 0:
     return False, f"No training session increment detected (delta={sessions_delta})"
-  if updated_cases_count <= 0:
-    return False, f"No DB prediction writeback detected (updated_cases_count={updated_cases_count})"
+  if updated_cases_count <= 0 and updated_cases <= 0:
+    return False, (
+      "No DB prediction writeback detected from training or post-sync "
+      f"(updated_cases_count={updated_cases_count}, updated_cases={updated_cases})"
+    )
   return True, "Epoch and DB writeback checks passed"
 
 

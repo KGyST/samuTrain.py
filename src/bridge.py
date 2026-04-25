@@ -21,9 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Suppress specific loggers to reduce noise
-logging.getLogger('tfaip').setLevel(logging.ERROR)
+logging.getLogger('tfaip').setLevel(logging.INFO)
 logging.getLogger('tfaip.device.device_config').setLevel(logging.ERROR)
-logging.getLogger('tfaip.trainer.callbacks.benchm').setLevel(logging.INFO)
+logging.getLogger('tfaip.trainer.callbacks.benchm').setLevel(logging.ERROR)
 logging.getLogger('calamari_ocr').setLevel(logging.ERROR)
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
 

@@ -133,8 +133,10 @@ async def discover_and_batch_cases():
 
 def active_evaluation_loop():
   """Continuously evaluate random cases and update failset status"""
-  evaluation_interval = int(os.environ.get('SAMUTRAIN_EVAL_INTERVAL', '10'))  # Reduce from 30s to 10s
-  print(f"🔄 Active evaluation started (interval: {evaluation_interval}s)")
+  evaluation_interval = int(os.environ.get('SAMUTRAIN_EVAL_INTERVAL', '0'))  # Changed to 0 for continuous learning
+  # Ensure minimum delay to prevent CPU overload
+  actual_interval = max(evaluation_interval, 0.1) if evaluation_interval > 0 else 0.1
+  print(f"🔄 Active evaluation started (interval: {actual_interval}s - continuous mode)")
   
   while not shutdown_requested:
     try:
@@ -162,7 +164,7 @@ def active_evaluation_loop():
     except Exception as e:
       print(f"⚠️ Evaluation error: {e}")
       
-    time.sleep(evaluation_interval)
+    time.sleep(actual_interval)
 
 def shutdown_training():
   """Train model on failset cases during shutdown with graceful checkpoint saving"""
@@ -636,7 +638,10 @@ if os.path.exists(STATIC_DIR):
 
   # 2. A statikus fájlok (JS, CSS) elérése (/static/main.js stb.)
   # Mount the parent data directory to serve all subfolders (64_case, new_case, single_case, etc.)
-  parent_data_dir = os.path.dirname(DATA_FOLDER)  # Get 'data' from 'data/single_case'
+  parent_data_dir = os.path.dirname(DATA_FOLDER) if os.path.dirname(DATA_FOLDER) else DATA_FOLDER  # Get 'data' from 'data/single_case'
+  if not parent_data_dir:
+    parent_data_dir = DATA_FOLDER
+  print(f"📁 Mounting static files from: {parent_data_dir}")
   app.mount("/static", StaticFiles(directory=parent_data_dir), name="static")
 
   # 3. "Mentőöv" útvonal: ha a böngésző frissítéskor eltévedne
