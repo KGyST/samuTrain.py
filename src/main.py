@@ -69,9 +69,9 @@ async def discover_and_batch_cases():
   
   while not shutdown_requested:
     try:
-      # 1. Get all files from data folder
-      files = glob.glob(os.path.join(DATA_FOLDER, "*.bin.png"))
-      file_paths = {os.path.basename(f) for f in files}
+      # 1. Get all files from data folder and subdirectories
+      files = glob.glob(os.path.join(DATA_FOLDER, "**/*.bin.png"), recursive=True)
+      file_paths = {os.path.relpath(f, DATA_FOLDER) for f in files}
       
       # 2. Query existing cases from DB (single query)
       existing_cases = db.get_cases(limit=10000)
@@ -141,25 +141,34 @@ def active_evaluation_loop():
   while not shutdown_requested:
     try:
       case = get_random_case(weighted=True)
-      if case and case.get('gt_text'):
-        # Get full path for prediction: img_path is basename (e.g. 010081.bin.png), file is in DATA_FOLDER
+      if case:
+        # Get full path for prediction: img_path is relative path (e.g. 64_case/010081.bin.png)
         img_path = os.path.join(DATA_FOLDER, case['img_path'])
         pred, conf = ocr_bridge.predict(img_path)
 
         # Update database with new prediction
         db.update_case_ocr_result(case['id'], pred, conf)
         
-        # Compare prediction with ground truth
-        success = (pred.strip() == case['gt_text'].strip())
+        # Handle both cases with and without GT text
+        if case.get('gt_text'):
+          # Case has GT text - normal comparison
+          success = (pred.strip() == case['gt_text'].strip())
+          gt_display = case['gt_text']
+          status_msg = f"{'✅ OK' if success else '❌ FAIL'} (conf: {conf:.3f})"
+        else:
+          # Case has no GT text - use prediction as temporary GT (architecture requirement)
+          success = True  # Assume success for learning purposes
+          gt_display = f"[PREDICTION USED AS GT: '{pred}']"
+          status_msg = f"🤖 No GT - using prediction as GT (conf: {conf:.3f})"
         
         # Update failset status (this will trigger logging)
         update_case_failset_status(case['id'], not success)
         
-        print(f"🔍 Evaluated {case['img_path']}: {'✅ OK' if success else '❌ FAIL'} (conf: {conf:.3f})")
+        print(f"🔍 Evaluated {case['img_path']}: {status_msg}")
         print(f"   📝 Prediction: '{pred}'")
-        print(f"   🎯 Ground Truth: '{case['gt_text']}'")
+        print(f"   🎯 Ground Truth: {gt_display}")
       else:
-        print(f"⏭️  No suitable case for evaluation (need GT text)")
+        print(f"⏭️  No cases available for evaluation")
         
     except Exception as e:
       print(f"⚠️ Evaluation error: {e}")
@@ -309,6 +318,43 @@ async def get_statistics():
   # #endregion
   return stats if stats else {"total": 0, "failset": 0}
 
+@app.get("/api/settings/ratio")
+async def get_failset_ratio():
+  """Get the current failset ratio"""
+  try:
+    ratio = db.get_failset_ratio()
+    return {"success": True, "ratio": ratio, "percentage": ratio * 100}
+  except Exception as e:
+    print(f"❌ Get ratio API error: {e}")
+    return {"success": False, "detail": str(e)}
+
+@app.post("/api/settings/ratio")
+async def set_failset_ratio(request: Request):
+  """Set the failset ratio"""
+  try:
+    data = await request.json()
+    ratio = data.get('ratio')
+    
+    if ratio is None:
+      return {"success": False, "detail": "ratio is required"}
+    
+    # Convert percentage to decimal if provided as percentage
+    if ratio > 1.0:
+      ratio = ratio / 100.0
+    
+    # Validate ratio is between 0 and 1
+    if ratio < 0.0 or ratio > 1.0:
+      return {"success": False, "detail": "ratio must be between 0 and 1"}
+    
+    success = db.set_failset_ratio(ratio)
+    if success:
+      return {"success": True, "ratio": ratio, "percentage": ratio * 100}
+    else:
+      return {"success": False, "detail": "Failed to update ratio"}
+  except Exception as e:
+    print(f"❌ Set ratio API error: {e}")
+    return {"success": False, "detail": str(e)}
+
 @app.get("/api/updates")
 async def get_updated_cases(since: Optional[str] = None):
   """Get cases with update flags for frontend notifications"""
@@ -343,12 +389,29 @@ async def clear_update_flags(request: Request):
 @app.get("/api/cases")
 async def get_cases(limit: int = 100, failset_only: bool = False):
   cases = db.get_cases(limit=limit, failset_only=failset_only)
-  parent_data_dir = os.path.dirname(DATA_FOLDER)
-  data_sub = os.path.basename(DATA_FOLDER)
+  # Determine the base directory for static files
+  if os.path.dirname(DATA_FOLDER):
+    parent_data_dir = os.path.dirname(DATA_FOLDER)
+  else:
+    parent_data_dir = DATA_FOLDER  # DATA_FOLDER is the base when it has no parent
+  
   for c in cases:
     ip = c.get("img_path", "")
-    if "/" not in ip and data_sub:
-      c["img_static_path"] = f"{data_sub}/{ip}"
+    # Check if the image path already includes a subfolder
+    if "/" not in ip:
+      # Try to find the image in any subfolder of the data directory
+      found = False
+      if os.path.exists(parent_data_dir):
+        for subdir in os.listdir(parent_data_dir):
+          subdir_path = os.path.join(parent_data_dir, subdir)
+          if os.path.isdir(subdir_path):
+            img_path = os.path.join(subdir_path, ip)
+            if os.path.exists(img_path):
+              c["img_static_path"] = f"{subdir}/{ip}"
+              found = True
+              break
+      if not found:
+        c["img_static_path"] = ip  # fallback
     else:
       c["img_static_path"] = ip
   # #region agent log
@@ -546,17 +609,63 @@ async def reload_model():
 
 @app.post("/api/cases/{case_id}/correct")
 async def correct_case(case_id: int, request: Request):
+  """
+  Enhanced correction endpoint with detailed error handling and feedback.
+  Implements ARCHITECTURE.md requirement: "If the ground truth is modified on UI then it is written back both to db and to the disc."
+  """
   try:
     data = await request.json()
     corrected_text = data.get('corrected_text', '')
     
+    # Input validation
+    if corrected_text is None:
+      return {"success": False, "detail": "corrected_text is required"}
+    
+    if not isinstance(corrected_text, str):
+      return {"success": False, "detail": "corrected_text must be a string"}
+    
+    # Get case info for better error messages
+    case = db.get_case_by_id(case_id)
+    if not case:
+      return {"success": False, "detail": f"Case {case_id} not found"}
+    
+    print(f"🔄 Processing correction for case {case_id}: '{case.get('gt_text', 'No GT')}' -> '{corrected_text}'")
+    
     success = db.update_case_correction(case_id, corrected_text)
+    
     if success:
-      return {"success": True}
+      # Get updated case info for response
+      updated_case = db.get_case_by_id(case_id)
+      return {
+        "success": True, 
+        "message": "Ground truth corrected successfully",
+        "case_id": case_id,
+        "old_gt": case.get('gt_text'),
+        "new_gt": corrected_text,
+        "disk_write": True,
+        "db_update": True,
+        "updated_case": updated_case
+      }
     else:
-      return {"success": False, "detail": "Failed to save correction"}
+      return {
+        "success": False, 
+        "detail": "Failed to save correction - check server logs for details",
+        "case_id": case_id,
+        "disk_write": False,
+        "db_update": False
+      }
+      
+  except json.JSONDecodeError:
+    return {"success": False, "detail": "Invalid JSON in request body"}
   except Exception as e:
-    return {"success": False, "detail": str(e)}
+    print(f"❌ Correction API error for case {case_id}: {e}")
+    import traceback
+    print(f"Traceback: {traceback.format_exc()}")
+    return {
+      "success": False, 
+      "detail": f"Server error: {str(e)}",
+      "case_id": case_id
+    }
 
 @app.post("/api/demo/learning")
 async def run_learning_demo(request: Request):

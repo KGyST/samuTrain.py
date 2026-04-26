@@ -101,6 +101,25 @@ class Database:
             )
           """)
         
+        # Check if settings exists and has correct structure
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'")
+        settings_table_exists = cursor.fetchone() is not None
+        
+        if not settings_table_exists:
+          conn.execute("""
+            CREATE TABLE settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          """)
+          
+          # Insert default failset ratio (30%)
+          conn.execute("""
+            INSERT INTO settings (key, value) VALUES ('failset_ratio', '0.3')
+          """)
+          print("✅ Settings table created with default failset_ratio")
+        
         conn.commit()
         print("✅ Database tables created successfully")
         
@@ -203,7 +222,7 @@ class Database:
       conn.row_factory = sqlite3.Row
       
       if weighted:
-        # Weighted selection: 70% trainset, 30% failset
+        # Weighted selection using configurable failset ratio
         cursor = conn.execute("SELECT COUNT(*) as count FROM cases WHERE is_failset = FALSE")
         train_count = cursor.fetchone()['count']
         
@@ -215,7 +234,8 @@ class Database:
           return None
           
         import random
-        use_failset = (random.random() < 0.3) and (fail_count > 0) or (train_count == 0)
+        failset_ratio = self.get_failset_ratio()
+        use_failset = (random.random() < failset_ratio) and (fail_count > 0) or (train_count == 0)
         
         if use_failset:
           cursor = conn.execute("SELECT * FROM cases WHERE is_failset = TRUE ORDER BY RANDOM() LIMIT 1")
@@ -250,9 +270,18 @@ class Database:
       return cursor.rowcount > 0
 
   def update_case_correction(self, case_id: int, corrected_text: str) -> bool:
+    """
+    Update ground truth correction with enhanced error handling and verification.
+    Writes to both database and disk as required by ARCHITECTURE.md.
+    """
     print(f"=== CORRECTION REQUEST ===")
     print(f"Case ID: {case_id}")
     print(f"Corrected text: '{corrected_text}'")
+    
+    # Input validation
+    if not isinstance(corrected_text, str):
+        print(f"ERROR: corrected_text must be a string, got {type(corrected_text)}")
+        return False
     
     with sqlite3.connect(self.db_path) as conn:
       case = self.get_case_by_id(case_id)
@@ -263,60 +292,108 @@ class Database:
       img_path = case['img_path']
       print(f"Image path from database: {img_path}")
       
-      # Handle static URLs - convert to actual file path
-      if img_path.startswith('/static/'):
-        # Get data folder from environment or default
-        data_folder = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
-        filename = img_path.replace('/static/', '')
-        # Convert test001.bin.png to test001.gt.txt
-        # Remove .bin.png and change to .gt.txt
-        print(f"Original filename: {filename}")
-        gt_filename = filename.replace('.bin.png', '.gt.txt')
-        gt_path = os.path.join(data_folder, gt_filename)
-        print(f"Converted static URL to GT path: {gt_path}")
-        print(f"GT filename: {gt_filename}")
-      else:
-        data_folder = os.environ.get('SAMUTRAIN_DATA_FOLDER', 'data')
-        if img_path.endswith('.bin.png'):
-            gt_filename = img_path.replace('.bin.png', '.gt.txt')
-        else:
-            gt_filename = img_path.rsplit('.', 1)[0] + '.gt.txt'
-        base_dir = data_folder if '/' not in img_path else os.path.dirname(data_folder)
-        gt_path = os.path.join(base_dir, gt_filename)
-        print(f"Using original GT path: {gt_path}")
-      
-      # Update .gt.txt file on disk
+      # Resolve GT file path using the same logic as _resolve_case_image_file
       try:
-        print(f"Attempting to write to GT file: {gt_path}")
-        print(f"File exists before write: {os.path.exists(gt_path)}")
-        print(f"Directory exists: {os.path.exists(os.path.dirname(gt_path))}")
-        
-        with open(gt_path, 'w', encoding='utf-8') as f:
-          f.write(corrected_text)
-        
-        print(f"Successfully wrote '{corrected_text}' to {gt_path}")
-        print(f"File exists after write: {os.path.exists(gt_path)}")
-        
-        # Verify content was written
-        with open(gt_path, 'r', encoding='utf-8') as f:
-          verify_content = f.read()
-        print(f"Verification - file content: '{verify_content}'")
-        
+          gt_path = self._resolve_gt_file_path(img_path)
+          print(f"Resolved GT file path: {gt_path}")
+          
+          # Ensure directory exists
+          gt_dir = os.path.dirname(gt_path)
+          if not os.path.exists(gt_dir):
+              print(f"Creating directory: {gt_dir}")
+              os.makedirs(gt_dir, exist_ok=True)
+          
+          # Write to disk with verification
+          print(f"Attempting to write to GT file: {gt_path}")
+          print(f"File exists before write: {os.path.exists(gt_path)}")
+          
+          # Backup original file if it exists
+          backup_content = None
+          if os.path.exists(gt_path):
+              with open(gt_path, 'r', encoding='utf-8') as f:
+                  backup_content = f.read()
+              print(f"Backed up original content: '{backup_content}'")
+          
+          with open(gt_path, 'w', encoding='utf-8') as f:
+              f.write(corrected_text)
+          
+          # Verify write was successful
+          with open(gt_path, 'r', encoding='utf-8') as f:
+              verify_content = f.read()
+          
+          if verify_content != corrected_text:
+              print(f"ERROR: Verification failed. Expected '{corrected_text}', got '{verify_content}'")
+              # Restore backup if available
+              if backup_content is not None:
+                  with open(gt_path, 'w', encoding='utf-8') as f:
+                      f.write(backup_content)
+                  print("Restored original content from backup")
+              return False
+          
+          print(f"✅ Successfully wrote '{corrected_text}' to {gt_path}")
+          print(f"✅ Verification passed")
+          
       except Exception as e:
-        print(f"Failed to update GT file {gt_path}: {e}")
-        print(f"Exception type: {type(e).__name__}")
-        return False
+          print(f"❌ Failed to update GT file {gt_path}: {e}")
+          print(f"Exception type: {type(e).__name__}")
+          import traceback
+          print(f"Traceback: {traceback.format_exc()}")
+          return False
       
       # Update database - store user correction as both GT and OCR
-      conn.execute("""
-        UPDATE cases 
-        SET gt_text = ?, ocr_text = ?, is_corrected = TRUE 
-        WHERE id = ?
-      """, (corrected_text, corrected_text, case_id))
-      conn.commit()
-      print(f"Database updated for case {case_id}")
-      print(f"=== CORRECTION COMPLETED ===")
-      return True
+      try:
+          conn.execute("""
+            UPDATE cases 
+            SET gt_text = ?, ocr_text = ?, is_corrected = TRUE, updated_flag = TRUE, last_updated = CURRENT_TIMESTAMP
+            WHERE id = ?
+          """, (corrected_text, corrected_text, case_id))
+          conn.commit()
+          print(f"✅ Database updated for case {case_id}")
+          print(f"=== CORRECTION COMPLETED SUCCESSFULLY ===")
+          return True
+      except Exception as e:
+          print(f"❌ Database update failed: {e}")
+          # Rollback disk changes if DB update fails
+          try:
+              if backup_content is not None:
+                  with open(gt_path, 'w', encoding='utf-8') as f:
+                      f.write(backup_content)
+                  print("Rolled back disk changes due to DB failure")
+          except Exception as rollback_e:
+              print(f"❌ Failed to rollback disk changes: {rollback_e}")
+          return False
+  
+  def _resolve_gt_file_path(self, img_path: str) -> str:
+      """
+      Resolve the ground truth file path for a given image path.
+      This mirrors the logic used in _resolve_case_image_file.
+      """
+      data_folder = os.path.normpath(
+          os.path.abspath(os.environ.get("SAMUTRAIN_DATA_FOLDER", "data"))
+      )
+      parent_data = os.path.dirname(data_folder)
+      
+      # Convert image path to GT path
+      if img_path.endswith('.bin.png'):
+          gt_filename = img_path.replace('.bin.png', '.gt.txt')
+      else:
+          gt_filename = img_path.rsplit('.', 1)[0] + '.gt.txt'
+      
+      sep_gt = gt_filename.replace("/", os.sep)
+      
+      # Try direct path under data folder
+      direct = os.path.join(data_folder, sep_gt)
+      if os.path.isfile(os.path.dirname(direct)):  # Check if directory exists
+          return direct
+      
+      # Try under parent data directory
+      if parent_data and os.path.isdir(parent_data):
+          under_parent = os.path.normpath(os.path.join(parent_data, sep_gt))
+          if os.path.isfile(os.path.dirname(under_parent)):  # Check if directory exists
+              return under_parent
+      
+      # Default to direct path (will be created if needed)
+      return direct
   
   def update_case_ocr_result(self, case_id: int, ocr_text: str, confidence: float) -> bool:
     """Update OCR result and confidence for a case"""
@@ -605,6 +682,41 @@ class Database:
       
       columns = [desc[0] for desc in cursor.description]
       return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+  def get_failset_ratio(self) -> float:
+    """Get the failset ratio from settings"""
+    try:
+      with sqlite3.connect(self.db_path) as conn:
+        cursor = conn.execute("SELECT value FROM settings WHERE key = 'failset_ratio'")
+        result = cursor.fetchone()
+        if result:
+          ratio = float(result[0])
+          # Validate ratio is between 0 and 1
+          return max(0.0, min(1.0, ratio))
+        else:
+          # Default to 0.3 if not found
+          return 0.3
+    except Exception as e:
+      print(f"Error getting failset ratio: {e}")
+      return 0.3  # Default fallback
+  
+  def set_failset_ratio(self, ratio: float) -> bool:
+    """Set the failset ratio in settings"""
+    try:
+      # Validate ratio is between 0 and 1
+      ratio = max(0.0, min(1.0, ratio))
+      
+      with sqlite3.connect(self.db_path) as conn:
+        conn.execute("""
+          INSERT OR REPLACE INTO settings (key, value, updated_at) 
+          VALUES ('failset_ratio', ?, CURRENT_TIMESTAMP)
+        """, (str(ratio),))
+        conn.commit()
+        print(f"✅ Failset ratio updated to {ratio:.2f}")
+        return True
+    except Exception as e:
+      print(f"Error setting failset ratio: {e}")
+      return False
 
   def reset_database(self):
     """Reset database by dropping and recreating tables instead of deleting file"""
