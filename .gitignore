@@ -40,7 +40,7 @@ cache/
 
 # IDE
 # .vscode/  # No .vscode directory found
-# .idea/  # No .idea directory found
+.idea/
 # *.swp  # No .swp files found
 # *.swo  # No .swo files found
 

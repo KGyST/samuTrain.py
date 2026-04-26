@@ -1,4 +1,7 @@
 [submodule "lib/samuLearnUI.ts"]
 	path = lib/samuLearnUI.ts
 	url = https://github.com/your-repo/samuLearnUI.ts.git
+[submodule "lib/samuTeszt-python"]
+	path = lib/samuTeszt-python
+	url = https://github.com/KGyST/samuTeszt-python.git
 	
