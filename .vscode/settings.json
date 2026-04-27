@@ -1,3 +1,4 @@
 {
     "windsurfPyright.disableLanguageServices": true
+		"python.analysis.extraPaths": ["./lib"]
 }

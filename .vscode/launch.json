@@ -1,6 +1,7 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
             "name": "Run server",
             "type": "python",
@@ -67,7 +68,7 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/try_learning_db_writeback.py",
-            "args": ["data/1962", "models/generic_ocr_model", "--epochs", "10"],
+            "args": ["data/1962", "models/generic_ocr_model", "--epochs", "1"],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "python": "${workspaceFolder}/venv_310/Scripts/python",

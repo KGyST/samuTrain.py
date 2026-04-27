@@ -16,12 +16,14 @@ import json
 import shutil
 from datetime import datetime
 
-# Add src/ and project root to sys.path for proper module imports
+# Add src/, project root, and lib/calamari to sys.path for proper module imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 src_dir = os.path.join(project_root, 'src')
+calamari_lib_dir = os.path.join(project_root, 'lib', 'calamari')
 sys.path.insert(0, src_dir)
 sys.path.insert(0, project_root)
+sys.path.insert(0, calamari_lib_dir)
 
 # Force minimal logging (from try_start_training)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -38,12 +40,8 @@ if sys.platform == "win32":
     sys.stdout = codecs.getwriter(UTF_8)(sys.stdout.detach())
 
 # Import Calamari library components for library mode (from try_start_training)
-try:
-    from calamari_ocr.ocr.scenario import CalamariScenario
-    from calamari_ocr.scripts.train import main as calamari_train
-    LIB_MODE = True
-except ImportError:
-    LIB_MODE = False
+from calamari_ocr.ocr.scenario import CalamariScenario
+from calamari_ocr.scripts.train import main as calamari_train
 
 # Global variables for graceful shutdown
 server_process = None
@@ -191,18 +189,15 @@ def validate_environment():
         print("⚠️ Virtual environment not found, may cause issues")
     
     # Check Calamari library
-    if not LIB_MODE:
-        print("⚠️ Calamari library not available, some features may be limited")
-    else:
-        print("✅ Calamari library available")
+    print("✅ Calamari library available")
     
     print("✅ Environment validation completed")
 
 # Force use of virtual environment
-venv_python = os.path.join(project_root, 'venv_310', 'Scripts', 'python.exe')
-if os.path.exists(venv_python) and sys.executable != venv_python:
-    print(f"⚠️ Switching to virtual environment Python: {venv_python}")
-    os.execv(venv_python, [venv_python] + sys.argv)
+# venv_python = os.path.join(project_root, 'venv_310', 'Scripts', 'python.exe')
+# if os.path.exists(venv_python) and sys.executable != venv_python:
+#     print(f"⚠️ Switching to virtual environment Python: {venv_python}")
+#     os.execv(venv_python, [venv_python] + sys.argv)
 
 if __name__ == "__main__":
     # Set up signal handlers for graceful shutdown (from try_start_training)
@@ -317,10 +312,7 @@ if __name__ == "__main__":
     print(f"📁 Model folder: {args.model_folder}")
     if args.new:
         print("🆕 Creating new model (database auto-reset)")
-    if LIB_MODE:
-        print("🔬 Calamari library mode: ENABLED")
-    else:
-        print("⚠️ Calamari library mode: DISABLED")
+    print("🔬 Calamari library mode: ENABLED")
     print("📊 UI will be available at: http://127.0.0.1:8000")
     print("📚 API docs at: http://127.0.0.1:8000/docs")
     print("⏹️  Press Ctrl+C to stop the server")

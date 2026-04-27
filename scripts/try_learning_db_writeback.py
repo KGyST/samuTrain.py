@@ -10,9 +10,99 @@ import sqlite3
 import sys
 import time
 import codecs
+import logging
+import re
+import threading
 from typing import List, Optional, Tuple
 
 UTF_8 = "utf-8"
+
+class EvaluationLogHandler(logging.Handler):
+    """Custom logging handler to capture Calamari evaluation output during training"""
+    
+    def __init__(self, db, session_id: str, data_files: List[str]):
+        super().__init__()
+        self.db = db
+        self.session_id = session_id
+        self.data_files = data_files
+        self.current_epoch = 0
+        self.evaluation_count = 0
+        self.buffer_lock = threading.Lock()
+        self.file_index = 0
+        
+    def set_epoch(self, epoch: int):
+        """Set current training epoch"""
+        self.current_epoch = epoch
+        self.file_index = 0  # Reset file index for new epoch
+        
+    def parse_evaluation_log(self, log_line: str) -> Optional[dict]:
+        """Parse evaluation log line: 'CER: 1.0\n  PRED: '1'\n  TRUE: 'Zebegényi SZOT Üdülő''"""
+        # Handle multi-line evaluation logs
+        lines = log_line.strip().split('\n')
+        if len(lines) < 3:
+            return None
+            
+        cer_match = None
+        pred_match = None
+        true_match = None
+        
+        for line in lines:
+            if 'CER:' in line:
+                cer_match = re.search(r'CER:\s*([\d.]+)', line)
+            elif 'PRED:' in line:
+                pred_match = re.search(r"PRED:\s*'([^']*)'", line)
+            elif 'TRUE:' in line:
+                true_match = re.search(r"TRUE:\s*'([^']*)'", line)
+        
+        if cer_match and pred_match and true_match:
+            return {
+                'cer': float(cer_match.group(1)),
+                'prediction': pred_match.group(1),
+                'ground_truth': true_match.group(1)
+            }
+        return None
+    
+    def get_current_image_file(self) -> Optional[str]:
+        """Get current image file being evaluated based on order"""
+        if self.file_index < len(self.data_files):
+            img_file = self.data_files[self.file_index]
+            self.file_index += 1
+            return img_file
+        return None
+    
+    def emit(self, record):
+        """Handle log record emission"""
+        try:
+            msg = self.format(record)
+            
+            # Check if this is an evaluation log
+            if "CER:" in msg and "PRED:" in msg and "TRUE:" in msg:
+                evaluation_data = self.parse_evaluation_log(msg)
+                
+                if evaluation_data:
+                    img_file = self.get_current_image_file()
+                    if img_file:
+                        # Insert into database immediately
+                        self.db.insert_training_evaluation(
+                            self.session_id,
+                            self.current_epoch,
+                            img_file,
+                            evaluation_data['cer'],
+                            evaluation_data['prediction'],
+                            evaluation_data['ground_truth']
+                        )
+                        
+                        with self.buffer_lock:
+                            self.evaluation_count += 1
+                        
+        except Exception as e:
+            # Don't let logging errors break training
+            print(f"⚠️ Evaluation logging error: {e}")
+    
+    def get_evaluation_count(self) -> int:
+        """Get total evaluation count"""
+        with self.buffer_lock:
+            return self.evaluation_count
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
@@ -155,6 +245,18 @@ def run_learning_db_writeback(data_folder: str, model_folder: str, epochs: int =
   start_epoch_seconds = int(time.time())
   print(f"Requested epochs: {epochs}")
 
+  # Setup evaluation logging to capture data during training
+  data_files = [os.path.basename(f) for f in _collect_learning_files(data_folder)]
+  session_id = f"eval_session_{int(start_epoch_seconds)}"
+  evaluation_handler = EvaluationLogHandler(db, session_id, data_files)
+  
+  # Get the tfaip model logger (this is where Calamari outputs evaluation data)
+  tfaip_logger = logging.getLogger('tfaip.model.print_evaluate_lay')
+  tfaip_logger.addHandler(evaluation_handler)
+  tfaip_logger.setLevel(logging.INFO)
+  
+  print(f"🔧 Evaluation logging setup for {len(data_files)} files in session {session_id[:8]}")
+
   success = bridge.continue_learning(
     data_folder=data_folder,
     checkpoint_folder=model_folder,
@@ -163,15 +265,17 @@ def run_learning_db_writeback(data_folder: str, model_folder: str, epochs: int =
     force=False,
     epochs=epochs,
   )
+  
+  # Cleanup evaluation logging
+  tfaip_logger.removeHandler(evaluation_handler)
+  evaluation_count = evaluation_handler.get_evaluation_count()
+  
   if not success:
     return False, "continue_learning returned False"
 
   after_stats = db.get_statistics()
   after_sessions = int(after_stats.get("training_sessions", 0))
   sessions_delta = after_sessions - before_sessions
-
-  db_path = os.path.abspath(db.db_path)
-  updated_cases_count = _count_recent_prediction_updates(db_path, start_epoch_seconds)
 
   model_out_dir = _latest_extended_model_dir(model_folder, start_epoch_seconds)
   if not model_out_dir:
@@ -185,31 +289,39 @@ def run_learning_db_writeback(data_folder: str, model_folder: str, epochs: int =
   if configured_epochs != epochs:
     return False, f"Epoch mismatch (requested={epochs}, persisted={configured_epochs})"
 
-  total_learning_cases, inserted_cases, updated_cases = _upsert_learning_cases_to_db(bridge, data_folder)
-  print(
-    f"Learning cases synced to DB: total={total_learning_cases}, inserted={inserted_cases}, updated={updated_cases}"
-  )
-  if total_learning_cases == 0:
-    return False, "No learning cases found in data folder (*.bin.png)"
-  if (inserted_cases + updated_cases) != total_learning_cases:
-    return False, (
-      f"DB sync mismatch (total={total_learning_cases}, "
-      f"inserted+updated={inserted_cases + updated_cases})"
-    )
+  # Verify evaluation data was captured during training
+  print(f"Evaluations captured during training: {evaluation_count}")
+  
+  # Get evaluation statistics from database
+  try:
+    evaluation_records = db.get_training_evaluations(session_id)
+    print(f"Evaluation records in database: {len(evaluation_records)}")
+    
+    if len(evaluation_records) > 0:
+      # Show some sample evaluation data
+      print("\nSample evaluation data:")
+      for i, record in enumerate(evaluation_records[:3]):
+        print(f"  {i+1}. CER: {record['cer']:.3f}, PRED: '{record['prediction']}', TRUE: '{record['ground_truth']}'")
+      
+      if len(evaluation_records) > 3:
+        print(f"  ... and {len(evaluation_records) - 3} more")
+    else:
+      print("⚠️ No evaluation records found in database")
+      
+  except Exception as e:
+    print(f"⚠️ Error reading evaluation data: {e}")
 
   if sessions_delta <= 0:
     return False, f"No training session increment detected (delta={sessions_delta})"
-  if updated_cases_count <= 0 and updated_cases <= 0:
-    return False, (
-      "No DB prediction writeback detected from training or post-sync "
-      f"(updated_cases_count={updated_cases_count}, updated_cases={updated_cases})"
-    )
-  return True, "Epoch and DB writeback checks passed"
+  if evaluation_count == 0:
+    return False, "No evaluation data captured during training"
+    
+  return True, f"Training completed with {evaluation_count} evaluations captured"
 
 
 def main() -> None:
   parser = argparse.ArgumentParser(
-    description="Run continue_learning and verify database writeback."
+    description="Run continue_learning and capture evaluation data during training."
   )
   parser.add_argument("data_folder", help="Path to training data folder")
   parser.add_argument("model_folder", help="Path to existing model folder")

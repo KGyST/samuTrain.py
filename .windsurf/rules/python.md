@@ -101,10 +101,11 @@
 		logging.error("Calamari library not available")
 		print("Calamari library not available")
   ```
-
-  # Create dummy classes for type hints when library not available
-  class TrainerParams:
-    pass
+	
+### Import handling
+- If an import is missing, suggest fixing the environment or pyproject.toml instead of hacking sys.path.
+- NEVER use sys.path.insert or sys.path.append to resolve imports.
+- ALWAYS assume the project uses a standard src-layout.
 
 ## 4. Software Design/Architecture
 - **Minimize AI Yapping**

@@ -2,6 +2,7 @@ import sqlite3
 import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from samuTeszt import Dumper
 
 
 def _resolve_case_image_file(img_path: str) -> str:
@@ -120,6 +121,26 @@ class Database:
           """)
           print("✅ Settings table created with default failset_ratio")
         
+        # Check if training_evaluations exists
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='training_evaluations'")
+        eval_table_exists = cursor.fetchone() is not None
+        
+        if not eval_table_exists:
+          conn.execute("""
+            CREATE TABLE training_evaluations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL,
+              epoch INTEGER NOT NULL,
+              img_path TEXT NOT NULL,
+              cer REAL NOT NULL,
+              prediction TEXT NOT NULL,
+              ground_truth TEXT NOT NULL,
+              timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (session_id) REFERENCES training_sessions(session_id)
+            )
+          """)
+          print("✅ Training evaluations table created")
+        
         conn.commit()
         print("✅ Database tables created successfully")
         
@@ -176,6 +197,7 @@ class Database:
       print(f"❌ Batch insert error: {e}")
       return 0
   
+  @Dumper()
   def insert_case(self, img_path: str, ocr_text: str, confidence: float, 
                   gt_text: Optional[str] = None, is_failset: bool = False, 
                   model_prediction: Optional[str] = None) -> int:
@@ -718,6 +740,44 @@ class Database:
       print(f"Error setting failset ratio: {e}")
       return False
 
+  def insert_training_evaluation(self, session_id: str, epoch: int, 
+                              img_path: str, cer: float, 
+                              prediction: str, ground_truth: str) -> int:
+    """Insert training evaluation data"""
+    with sqlite3.connect(self.db_path) as conn:
+      cursor = conn.execute("""
+        INSERT INTO training_evaluations 
+        (session_id, epoch, img_path, cer, prediction, ground_truth)
+        VALUES (?, ?, ?, ?, ?, ?)
+      """, (session_id, epoch, img_path, cer, prediction, ground_truth))
+      conn.commit()
+      return cursor.lastrowid
+
+  def get_training_evaluations(self, session_id: str, 
+                             epoch: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get training evaluations for a session"""
+    with sqlite3.connect(self.db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      query = "SELECT * FROM training_evaluations WHERE session_id = ?"
+      params = [session_id]
+      
+      if epoch is not None:
+        query += " AND epoch = ?"
+        params.append(epoch)
+      
+      query += " ORDER BY timestamp"
+      cursor = conn.execute(query, params)
+      return [dict(row) for row in cursor.fetchall()]
+
+  def count_training_evaluations(self, session_id: str) -> int:
+    """Count training evaluations for a session"""
+    with sqlite3.connect(self.db_path) as conn:
+      cursor = conn.execute(
+        "SELECT COUNT(*) FROM training_evaluations WHERE session_id = ?", 
+        (session_id,)
+      )
+      return int(cursor.fetchone()[0])
+
   def reset_database(self):
     """Reset database by dropping and recreating tables instead of deleting file"""
     print(f"🧹 Resetting database at: {self.db_path}")
@@ -805,3 +865,15 @@ def update_training_session(session_id: str, status: str, model_folder: Optional
 
 def get_training_sessions(limit: int = 10) -> List[Dict[str, Any]]:
   return db.get_training_sessions(limit)
+
+def insert_training_evaluation(session_id: str, epoch: int, 
+                              img_path: str, cer: float, 
+                              prediction: str, ground_truth: str) -> int:
+  return db.insert_training_evaluation(session_id, epoch, img_path, cer, prediction, ground_truth)
+
+def get_training_evaluations(session_id: str, 
+                             epoch: Optional[int] = None) -> List[Dict[str, Any]]:
+  return db.get_training_evaluations(session_id, epoch)
+
+def count_training_evaluations(session_id: str) -> int:
+  return db.count_training_evaluations(session_id)
