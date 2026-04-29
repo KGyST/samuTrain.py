@@ -10,8 +10,6 @@
 ## 2. Type Safety & Input Validation
 - **Type Hinting**: All function signatures shall use Python type hints for all arguments and return values if applicable.
 - **Pre-condition Asserts**: Every function shall start with `assert` statements to validate input integrity.
-  - **Path Validation**: For string paths, check if the path exists and if appropriate permissions (R/W) are granted.
-  - **State Validation**: If a folder must be empty for a process, include an explicit assert for it.
   - **Custom Functions**: When defining multiple items having same assertions, create a helper function to avoid code duplication.
 	- **No Trivial Assertions**: Don't assert trivial things like argument types that are defined by type hints.
 - **Example:**
@@ -92,7 +90,7 @@
 - **File Ending**: Per PEP8, ensure exactly two newlines at the end of every file/macro.
 - **Indentation**: Use 2 spaces for indentation.
 - **No AI Yapping, No Code Slop**: Don't write to console. Number of code response, including`print()` commands, logging etc. must be minimized
-- **NO Error Sallowing**: don't swallow errors that sign bad behaviour so that the program cannot run. Like mocking imports on `ImportError`
+- **NO Error Sallowing**: never swallow errors that sign bad behaviour so that the program cannot run. Like mocking imports on `ImportError`
   - **Bad Example**:
   ```python
 	try:
@@ -103,12 +101,10 @@
   ```
 	
 ### Import handling
-- If an import is missing, suggest fixing the environment or pyproject.toml instead of hacking sys.path.
+- If an import is missing, suggest to user fixing the environment or pyproject.toml instead of hacking sys.path.
 - NEVER use sys.path.insert or sys.path.append to resolve imports.
-- ALWAYS assume the project uses a standard src-layout.
 
 ## 4. Software Design/Architecture
-- **Minimize AI Yapping**
 - **Use Design Patterns**: and naming should hint them
   - **Examples**: `settingsSingleton`, `GUIObserver` 
 - **Use Nested Functions or Classes**: if needed, for example, avoiding import issues.
@@ -123,7 +119,7 @@
     
     return _recursee(parameter)
   ```
-- **Exceptions**: handle exceptions only if it can make the program continue after solving the problem.
+- **Exceptions**: handle exceptions only if it can make the program continue after solving the problem. Fail fast.
 **Good example**:
 ```python
 try:
