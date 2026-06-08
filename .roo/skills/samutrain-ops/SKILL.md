@@ -1,6 +1,15 @@
 ---
 name: samutrain-ops
-description: Tools and rules for managing samuTrain server, database resets, and code style.
+description: >-
+  Tools and rules for managing samuTrain server, database resets, and code
+  style.
+modeSlugs:
+  - architect
+  - code
+  - ask
+  - debug
+  - orchestrator
+  - refactor
 ---
 
 ### Terminal Commands

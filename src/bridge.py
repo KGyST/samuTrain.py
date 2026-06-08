@@ -558,6 +558,52 @@ class OCRBridge:
       return "NOT INITIALIZED"
     return f"Calamari - {'READY' if self.learner.predictor else 'NO MODEL'}"
 
+  def get_learning_engine(self) -> ContinueLearningEngine:
+    """Get the continue learning engine for advanced operations"""
+    return self.learning_engine
+
+  def split_word_to_characters(self, image_path: str, target_text: str = None) -> List[Tuple[np.ndarray, str, float]]:
+    """
+    Split a word image into individual character images using Calamari's native API
+    
+    Args:
+        image_path: Path to the word image file
+        target_text: Optional target text for fallback simple splitting
+        
+    Returns:
+        List of tuples: (character_image, character_text, confidence)
+    """
+    try:
+      # Import the enhanced splitter
+      from engines.calamari_splitter_v2 import CalamariCharacterSplitterV2, SplitterConfig
+      
+      # Create splitter with optimized config
+      config = SplitterConfig(
+        use_native_api=True,
+        use_subprocess_for_positions=True,
+        fallback_to_simple=True,
+        min_char_width=5,
+        max_char_width=100,
+        confidence_threshold=0.3,
+        cache_predictions=True
+      )
+      
+      splitter = CalamariCharacterSplitterV2(self.model_path, config)
+      
+      # Load and preprocess image
+      image = Image.open(image_path).convert('L')
+      image_np = np.array(image)
+      
+      # Split the image
+      char_results = splitter.split_word_to_chars(image_np, target_text)
+      
+      logger.info(f"Split word into {len(char_results)} characters using native API")
+      return char_results
+      
+    except Exception as e:
+      logger.error(f"Failed to split word image: {e}")
+      return []
+
 # --- Legacy Compatibility Functions ---
 def insert_training_session(session_id: str, data_folder: str, checkpoint_folder: str,
                           network: Optional[str] = None, backup_folder: Optional[str] = None,

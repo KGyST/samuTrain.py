@@ -102,22 +102,30 @@ def load_pairs(sDataDir: str, charSet: set[str]) -> list:
     return pairs
 
 def save_checkpoint(graph, params, codec, sOutputDir: str, iStep: int) -> str:
-    sCkptDir = os.path.join(sOutputDir, f"checkpoint_{iStep:04d}")
+    sCkptName = f"checkpoint_{iStep:04d}"
+    sCkptDir = os.path.join(sOutputDir, sCkptName)
     os.makedirs(sCkptDir, exist_ok=True)
     sWeightsPath = os.path.join(sCkptDir, "checkpoint.h5")
     with h5py.File(sWeightsPath, 'w') as f:
         weights = graph.get_weights()
         for i, weight in enumerate(weights):
             f.create_dataset(f'weight_{i}', data=weight)
-    checkpointData = {
-        "model_params": params.scenario.model.to_dict(),
-        "trainer_params": params.to_dict(),
-        "codec": {"charset": codec.charset},
-        "checkpoint_path": "checkpoint.h5",
-    }
-    with open(os.path.join(sCkptDir, "checkpoint.json"), "w", encoding=UTF_8) as f:
-        json.dump(checkpointData, f, indent=2)
+    paramsCopy = params.to_dict()
+    paramsCopy["codec"] = {"charset": codec.charset}
+    with open(os.path.join(sOutputDir, f"{sCkptName}.json"), "w", encoding=UTF_8) as f:
+        json.dump(paramsCopy, f, indent=2)
     return sCkptDir
+
+def load_checkpoint_weights(graph, sCheckpointJson: str) -> None:
+    sBase = os.path.splitext(sCheckpointJson)[0]
+    sH5Path = os.path.join(sBase, "checkpoint.h5")
+    if not os.path.exists(sH5Path):
+        sH5Path = os.path.join(os.path.dirname(sCheckpointJson), "checkpoint.h5")
+    if not os.path.exists(sH5Path):
+        raise FileNotFoundError(f"No checkpoint.h5 found near {sCheckpointJson}")
+    with h5py.File(sH5Path, 'r') as f:
+        weights = [f[f'weight_{i}'][:] for i in range(len(f))]
+    graph.set_weights(weights)
 
 def train_batch(graph, optimizer, codec, batchImages: list, batchLabels: list,
                 iTargetHeight: int, iMaxWidth: int) -> list:
@@ -169,6 +177,8 @@ def run_main(iEpochs: int, sCheckpointPath: str, bFromScratch: bool,
 
     with open(sCheckpoint, "r", encoding=UTF_8) as f:
         params_dict = json.load(f)
+    if "trainer_params" in params_dict:
+        params_dict = params_dict["trainer_params"]
     params = TrainerParams.from_dict(params_dict)
 
     if bFromScratch:
@@ -198,9 +208,17 @@ def run_main(iEpochs: int, sCheckpointPath: str, bFromScratch: bool,
 
     if not bFromScratch:
         sCkptDir = sCheckpoint.replace(".json", "")
-        loadedModel = tf.keras.models.load_model(sCkptDir)
-        graph.set_weights(loadedModel.get_layer('root').get_weights())
-        print("Loaded pre-trained weights")
+        sH5Path = os.path.join(sCkptDir, "checkpoint.h5")
+        if not os.path.exists(sH5Path):
+            sCkptDir = os.path.dirname(sCheckpoint)
+            sH5Path = os.path.join(sCkptDir, "checkpoint.h5")
+        if os.path.exists(sH5Path):
+            load_checkpoint_weights(graph, sCheckpoint)
+            print("Loaded weights from custom checkpoint")
+        else:
+            loadedModel = tf.keras.models.load_model(sCkptDir)
+            graph.set_weights(loadedModel.get_layer('root').get_weights())
+            print("Loaded pre-trained weights")
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=fLr, clipnorm=1.0)
     for iEpoch in range(iEpochs):

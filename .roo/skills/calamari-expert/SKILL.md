@@ -1,6 +1,15 @@
 ---
 name: calamari-expert
-description: Comprehensive Calamari CLI parameters, PAIArgumentParser documentation, flat/nested modes, and detailed argument functionalities for all scripts
+description: >-
+  Comprehensive Calamari CLI parameters, PAIArgumentParser documentation,
+  flat/nested modes, and detailed argument functionalities for all scripts
+modeSlugs:
+  - architect
+  - code
+  - ask
+  - debug
+  - orchestrator
+  - refactor
 ---
 
 # Calamari CLI Arguments Documentation

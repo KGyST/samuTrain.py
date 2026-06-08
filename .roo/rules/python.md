@@ -14,23 +14,24 @@
 	- **No Trivial Assertions**: Don't assert trivial things like argument types that are defined by type hints.
 - **Example:**
   ```python
-    def assert_empty_directory(target_path: str):
+    def is_empty_directory(target_path: str) -> bool:
       """Helper function for assertions"""
 			# Note that a directory being empty is a common need so it is a good idea to put this into a function
-			# Since the type hint target_path: str
-			# No need for:
-			# assert type(target_path) == str
+			# Also note that this function can be called from elsewhere, like UI displaying that the given folder path is not OK
+			# Since the type hint `target_path: str`, no need for:
+			# `assert type(target_path) == str`
       import os
-      assert os.path.isabs(target_path), f"Path must be absolute: {target_path}"
-      assert os.path.exists(target_path), f"Directory missing: {target_path}"
-      assert len(os.listdir(target_path)) == 0, f"Target folder is not empty: {target_path}"
+			if not os.path.isabs(target_path):
+				return False
+      if not os.path.exists(target_path):
+				return False
+      if not len(os.listdir(target_path)) == 0:
+				return False
 
     def initialize_workspace(target_path: str):
-      # Assertions for safety using the Walrus operator
-      # Validation passes only if sError is None.
 			# `target_path` is an agrument, so snake_case
 			
-      assert_empty_directory(target_path)
+      assert is_empty_directory(target_path)
         
       # Logic...
       ``` 
@@ -123,11 +124,11 @@
 **Good example**:
 ```python
 try:
-  some_function_throwing_exception()
+	some_function_throwing_exception()
 except SomeSpecificException as e:
-  # No print, just handle the exception
-  # Logging etc. only when user called for it
-  exception_handling_function()
+	# No print, just handle the exception
+	# Logging etc. only when user called for it
+	exception_handling_function()
 ```
 
 **Bad example**:
